@@ -2,7 +2,7 @@
 
 This tool removes certificate pinning from APKs.
 
-Work in progress. Hightlights include:
+Work in progress. Highlights include:
 
  - Does not require root.
  - Uses [`frida-apk`](https://github.com/frida/frida-tools/blob/main/frida_tools/apk.py) to mark app as debuggable.
@@ -10,12 +10,14 @@ Work in progress. Hightlights include:
  - Includes a new/custom Java Debug Wire Protocol Implementation to inject the Frida Gadget via ADB.
  - Uses HTTPToolkit's unpinning script to defeat certificate pinning 
    (https://github.com/httptoolkit/frida-android-unpinning)
- - Already includes all native dependencies (`apksigner`, `zipalign`, `aapt2`) for Windows/Linux/macOS.
+ - Already includes all native dependencies (`adb`, `apksigner`, `zipalign`, `aapt2`) for Windows/Linux/macOS.
 
 The goal is not to build yet another unpinning tool, but to explore some newer avenues.
 Hopefully the good parts are copied by the existing tools. :-)
 
 ## Usage
+
+Prerequisites: Connect your phone via USB/start your emulator and then obtain the APK you are interested in.
 
 ```console
 $ android-unpinner run pinning-demo.apk

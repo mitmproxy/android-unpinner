@@ -1,7 +1,7 @@
 import subprocess
 import sys
+from functools import cache
 from pathlib import Path
-
 
 here = Path(__file__).absolute().parent
 
@@ -46,6 +46,8 @@ def sign(apk_file: Path) -> None:
         apk_file
     ], check=True)
 
+
+@cache
 def package_name(apk_file: Path) -> str:
     return subprocess.run([
         aapt2_binary,

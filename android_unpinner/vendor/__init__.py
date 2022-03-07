@@ -2,7 +2,6 @@ from pathlib import Path
 
 here = Path(__file__).absolute().parent
 
-unpin_file = here / "httptoolkit-unpin/unpin.js"
 gadget_files = {
     "arm": here / "frida/frida-gadget-15.1.17-android-arm.so",
     "arm64": here / "frida/frida-gadget-15.1.17-android-arm64.so",
