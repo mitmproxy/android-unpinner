@@ -21,6 +21,8 @@ Hopefully the good parts are copied by the existing tools. :-)
 $ android-unpinner run pinning-demo.apk
 ```
 
+![screenshot](https://uploads.hi.ls/2022-03/2022-03-07_13-41-03.png)
+
 ## Comparison
 
 Compared to [`apk-mitm`](https://github.com/shroudedcode/apk-mitm):
