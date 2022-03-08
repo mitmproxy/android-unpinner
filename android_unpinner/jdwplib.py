@@ -64,7 +64,7 @@ class JDWPClient:
 
     @classmethod
     async def connect_adb(cls, adb_binary: Path | None = None) -> JDWPClient:
-        """Take the first debuggable PID found via ADB, forward it via TCP, and connect to it."""
+        """Take the first (!) debuggable PID found via ADB, forward it via TCP, and connect to it."""
         log.info("Obtaining jdwp pid from adb...")
         if adb_binary is None:
             adb_binary = "adb"

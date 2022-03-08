@@ -2,6 +2,7 @@ import asyncio
 import logging
 import subprocess
 from pathlib import Path
+from time import sleep
 
 import rich.traceback
 import rich_click as click
@@ -100,9 +101,25 @@ def start_app_on_device(package_name: str) -> None:
     adb(f"shell am set-debug-app -w {package_name}")
     adb(f"shell monkey -p {package_name} 1")
 
+    logging.info("Obtain process id...")
+    pid = None
+    for i in range(5):
+        try:
+            pid = adb(f"shell pidof {package_name}").stdout.strip()
+            break
+        except subprocess.CalledProcessError:
+            if i:
+                logging.info("Timeout...")
+            if i == 4:
+                raise
+            sleep(1)
+    logging.debug(f"{pid=}")
+    local_port = int(adb(f"forward tcp:0 jdwp:{pid}").stdout)
+    logging.debug(f"{local_port=}")
+
     async def inject_frida():
         logging.info("Establish Java Debug Wire Protocol Connection over ADB...")
-        async with await jdwplib.JDWPClient.connect_adb(adb_binary) as client:
+        async with jdwplib.JDWPClient("127.0.0.1", local_port) as client:
             logging.info("Advance until android.app.Activity.onCreate...")
             thread_id = await client.advance_to_breakpoint(
                 "Landroid/app/Activity;", "onCreate"
