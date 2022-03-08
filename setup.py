@@ -27,7 +27,6 @@ setup(
         "Issues": "https://github.com/mitmproxy/android-unpinner/issues",
     },
     classifiers=[
-        "License :: OSI Approved :: MIT License",
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
         "Operating System :: MacOS",

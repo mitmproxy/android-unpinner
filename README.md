@@ -2,49 +2,68 @@
 
 This tool removes certificate pinning from APKs.
 
-Work in progress. Highlights include:
-
  - Does not require root.
  - Uses [`frida-apk`](https://github.com/frida/frida-tools/blob/main/frida_tools/apk.py) to mark app as debuggable.
-   This is much less invasive than other approaches, `classes.dex` and all resources remain unmodified.
- - Includes a new/custom Java Debug Wire Protocol Implementation to inject the Frida Gadget via ADB.
- - Uses HTTPToolkit's unpinning script to defeat certificate pinning 
-   (https://github.com/httptoolkit/frida-android-unpinning)
- - Already includes all native dependencies (`adb`, `apksigner`, `zipalign`, `aapt2`) for Windows/Linux/macOS.
+   This is much less invasive than other approaches, only `AndroidManifest.xml` is touched within the APK.
+ - Includes a custom Java Debug Wire Protocol implementation to inject the Frida Gadget via ADB.
+ - Uses [HTTPToolkit's excellent unpinning script](https://github.com/httptoolkit/frida-android-unpinning) to defeat certificate pinning.
+ - Already includes all native dependencies for Windows/Linux/macOS (`adb`, `apksigner`, `zipalign`, `aapt2`).
 
-The goal is not to build yet another unpinning tool, but to explore some newer avenues.
-Hopefully the good parts are copied by the existing tools. :-)
+The goal was not to build yet another unpinning tool, but to explore some newer avenues for non-rooted devices.
+Please shamelessly copy whatever idea you like into other tools. :-)
+
+## Installation
+
+```console
+$ git clone https://github.com/mitmproxy/android-unpinner.git
+$ cd android-unpinner
+$ pip install -e .
+```
 
 ## Usage
 
-Prerequisites: Connect your phone via USB/start your emulator and then obtain the APK you are interested in.
+Connect your device via USB and run the following command.
 
 ```console
-$ android-unpinner run pinning-demo.apk
+$ android-unpinner all pinning-demo.apk
 ```
 
-![screenshot](https://uploads.hi.ls/2022-03/2022-03-07_13-41-03.png)
+![screenshot](https://uploads.hi.ls/2022-03/2022-03-08_08-18-25.png)
 
-## Comparison
+See `android-unpinner --help` for usage details.
 
-Compared to [`apk-mitm`](https://github.com/shroudedcode/apk-mitm):
+You can download APKs from the internet, for example manually from [apkpure.com](https://apkpure.com/) or automatically
+using [apkeep](https://github.com/EFForg/apkeep).  
+Alternatively, you can [pull APKs from your device using adb](https://stackoverflow.com/a/18003462/934719). A copy of 
+`adb` is available in `android_unpinner/vendor/platform_tools`.
 
-🟥 Requires active instrumentation from a desktop machine when launching the app.  
-🟩 The apk patching however is much less invasive, `classes.dex` stays as-is.  
-🟩 Frida potentially allows more dynamic/better patching at runtime.
+## Comparison 
 
-Compared to [`objection`](https://github.com/sensepost/objection):
+**Compared to using a rooted device, android-unpinner...**
 
-🟥 No interactive analysis.  
-🟩 Easier to get started, no additional dependencies.  
-🟩 The apk patching is much less invasive, `classes.dex` stays as-is.
+🟥 requires APK patching.  
+🟩 does not need to hide from root detection.  
 
-Compared to [`frida`](https://frida.re/) + [`LIEF`](https://lief-project.github.io/doc/latest/tutorials/09_frida_lief.html):
+**Compared to [`apk-mitm`](https://github.com/shroudedcode/apk-mitm), android-unpinner...**
 
-🟩 Does not require that the application has a native library.  
-🟥 Modifies `AndroidManifest.xml`  
+🟥 requires active instrumentation from a desktop machine when launching the app.  
+🟩 allows more dynamic patching at runtime (thanks to Frida).  
+🟩 does less invasive APK patching, e.g. `classes.dex` stays as-is.  
+
+**Compared to [`objection`](https://github.com/sensepost/objection), android-unpinner...**
+
+🟥 supports only one feature (disable pinning) and no interactive analysis shell.  
+🟩 is easier to get started with, does not require additional dependencies.  
+🟩 does less invasive APK patching, e.g. `classes.dex` stays as-is.  
+
+**Compared to [`frida`](https://frida.re/) + [`LIEF`](https://lief-project.github.io/doc/latest/tutorials/09_frida_lief.html),
+android-unpinner...**
+
+🟥 modifies `AndroidManifest.xml`  
+🟩 is easier to get started with, does not require additional dependencies.  
+🟩 Does not require that the application includes a native library.  
 
 ## Licensing
 
 Please note that `android_unpinner/vendor` is a hodgepodge of different licenses.  
-Everything new here is licensed under MIT (in particular `jdwplib.py`). 
+Everything new here is licensed under MIT (in particular `jdwplib.py`).
