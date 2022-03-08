@@ -32,17 +32,19 @@ def zipalign(apk_file: Path) -> None:
 
 
 def sign(apk_file: Path) -> None:
+    # android-unpinner.jks was generated as follows:
+    # keytool -genkey -v -keystore android-unpinner.jks -alias android-unpinner -keyalg RSA -keysize 2048 -validity 3650
     subprocess.run([
         apksigner_binary,
         "sign",
         "--v4-signing-enabled",
         "false",
         '--ks',
-        here / "../objection.jks",
+        here / "android-unpinner.jks",
         '--ks-pass',
-        'pass:basil-joule-bug',
+        'pass:correcthorsebatterystaple',
         '--ks-key-alias',
-        'objection',
+        'android-unpinner',
         apk_file
     ], check=True)
 

@@ -25,10 +25,10 @@ $ pip install -e .
 Connect your device via USB and run the following command.
 
 ```console
-$ android-unpinner all pinning-demo.apk
+$ android-unpinner all httptoolkit-pinning-demo.apk
 ```
 
-![screenshot](https://uploads.hi.ls/2022-03/2022-03-08_08-18-25.png)
+![screenshot](https://uploads.hi.ls/2022-03/2022-03-08_09-09-36.png)
 
 See `android-unpinner --help` for usage details.
 
@@ -65,5 +65,21 @@ android-unpinner...**
 
 ## Licensing
 
-Please note that `android_unpinner/vendor` is a hodgepodge of different licenses.  
-Everything new here is licensed under MIT (in particular `jdwplib.py`).
+This tool stands on the shoulders of giants.
+
+- `httptoolkit-pinning-demo.apk` is a copy of HTTP Toolkit's neat demo app available
+  at https://github.com/httptoolkit/android-ssl-pinning-demo 
+  (Apache-2.0 License).
+- `scripts/httptoolkit-unpinner.js` is a copy of HTTP Toolkit's excellent unpinning script available at
+  https://github.com/httptoolkit/frida-android-unpinning/ 
+  (Apache-2.0 License).
+- `android_unpinner/vendor/frida/` contains the fantastic Frida gadgets available at https://frida.re/
+  (wxWindows Library Licence, Version 3.1).
+- `android_unpinner/vendor/frida-tools/` is adapted from https://github.com/frida/frida-tools 
+  (wxWindows Library Licence, Version 3.1).
+- `android_unpinner/vendor/build_tools/` is a copy of some of Android's build tools 
+  (see `NOTICE.txt` therein for license).
+- `android_unpinner/vendor/platform_tools/` is a copy of some of Android's platform tools 
+  (see `NOTICE.txt` therein for license).
+- Code written here is licensed under the MIT license 
+  (https://github.com/mitmproxy/mitmproxy/blob/main/LICENSE).
