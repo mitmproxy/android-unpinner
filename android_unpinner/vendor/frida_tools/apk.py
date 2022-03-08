@@ -49,8 +49,12 @@ def make_debuggable(path: str, output_path: str) -> None:
                         data.extend(header.chunk_data)
 
                     oz.writestr(info.filename, bytes(data), info.compress_type)
-                elif info.filename.startswith("META-INF"):
-                    pass
+                elif info.filename.upper() == "META-INF/MANIFEST.MF":
+                    # Historically frida-apk deleted META-INF/ entirely, but that breaks some apps.
+                    # It turns out that v1 signatures (META-INF/MANIFEST.MF) are not validated at all on
+                    # modern Android versions, so we can keep them in for now.
+                    # If this doesn't work for you, try to comment out the following line.
+                    oz.writestr(info.filename, f.read(), info.compress_type)
                 else:
                     oz.writestr(info.filename, f.read(), info.compress_type)
 
