@@ -49,7 +49,10 @@ setup(
         ]
     ),
     include_package_data=True,
-    entry_points={"console_scripts": ["android-unpinner = android_unpinner.__main__:cli"]},
+    entry_points={"console_scripts": [
+        "android-unpinner = android_unpinner.__main__:cli",
+        "aup = android_unpinner.__main__:cli",
+    ]},
     python_requires=">=3.10",
     install_requires=[
         "rich_click",
