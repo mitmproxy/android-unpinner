@@ -61,6 +61,8 @@ class JDWPClient:
         self._replies: dict[int, Packet] = {}
         self.current_id: int = 0
         self.server_commands: asyncio.Queue[Packet] = asyncio.Queue()
+        self._class_ids = {}
+        self._method_ids = {}
 
     @classmethod
     async def connect_adb(cls, adb_binary: Path | None = None) -> JDWPClient:
@@ -168,32 +170,39 @@ class JDWPClient:
         Get the class id for the first class matching the signature,
         e.g. "Ljava/lang/Runtime;".
         """
-        resp = await self.send_command(
-            Commands.CLASSES_BY_SIGNATURE, _encode_jdwp_str(cls_sig)
-        )
-        (classes,) = struct.unpack_from("!I", resp.data)
-        if not classes:
-            return None
-        else:
-            return resp.data[5: 5 + self.sizes.reference]
+        if cls_sig not in self._class_ids:
+            resp = await self.send_command(
+                Commands.CLASSES_BY_SIGNATURE, _encode_jdwp_str(cls_sig)
+            )
+            (classes,) = struct.unpack_from("!I", resp.data)
+            if not classes:
+                raise ValueError(f"Class not found: {cls_sig}")
+            else:
+                self._class_ids[cls_sig] = resp.data[5: 5 + self.sizes.reference]
 
-    async def get_first_method_id(self, cls_id: bytes, name: str) -> bytes | None:
+        return self._class_ids[cls_sig]
+
+    async def get_first_method_id(self, cls_id: bytes, name: str) -> bytes:
         """
         Get the method id for the first method matching the signature in the given class,
         e.g. "getRuntime".
         """
-        resp = await self.send_command(Commands.METHODS, cls_id)
-        buf = io.BytesIO(resp.data)
-        (methods,) = struct.unpack("!I", buf.read(4))
-        for _ in range(methods):
-            id = buf.read(self.sizes.method)
-            mname = _read_str(buf)
-            signature_ = _read_str(buf)
-            mod_bits_ = buf.read(4)
+        if (cls_id, name) not in self._method_ids:
+            resp = await self.send_command(Commands.METHODS, cls_id)
+            buf = io.BytesIO(resp.data)
+            (methods,) = struct.unpack("!I", buf.read(4))
+            for _ in range(methods):
+                id = buf.read(self.sizes.method)
+                mname = _read_str(buf)
+                signature_ = _read_str(buf)
+                mod_bits_ = buf.read(4)
 
-            if name == mname:
-                return id
-        return None
+                if name == mname:
+                    self._method_ids[(cls_id, name)] = id
+                    break
+            else:
+                raise ValueError(f"Method not found: {name}")
+        return self._method_ids[(cls_id, name)]
 
     async def advance_to_breakpoint(self, cls_sig: str, method_name: str) -> bytes:
         """
@@ -236,10 +245,12 @@ class JDWPClient:
 
         return thread_id
 
-    async def get_runtime(self, thread_id: bytes, runtime_class_id: bytes) -> bytes:
+    async def get_runtime(self, thread_id: bytes) -> bytes:
         """
         Get the instance id of the current runtime.
         """
+        runtime_class_id = await self.get_first_class_id("Ljava/lang/Runtime;")
+        assert runtime_class_id
         get_runtime = await self.get_first_method_id(runtime_class_id, "getRuntime")
         assert get_runtime
 
@@ -262,82 +273,83 @@ class JDWPClient:
         assert resp.data
         return resp.data
 
-    async def exec(self, thread_id: bytes, cmd: str) -> None:
+    async def invoke_method(
+        self,
+        object_id: bytes,
+        thread_id: bytes,
+        class_sig: str,
+        method_name: str,
+        arguments: bytes = b"\x00\x00\x00\x00",
+    ) -> bytes:
+        class_id = await self.get_first_class_id(class_sig)
+        assert class_id
+        method_id = await self.get_first_method_id(class_id, method_name)
+        assert method_id
+
+        resp = await self.send_command(
+            Commands.INVOKE_METHOD,
+            object_id
+            + thread_id
+            + class_id
+            + method_id
+            + arguments
+            + b"\x00\x00\x00\x00",
+        )
+        assert resp.message == 0
+
+        exception = resp.data[-self.sizes.object:]
+        if exception != b"\x00\x00\x00\x00\x00\x00\x00\x00":
+            throwable = await self.get_first_class_id("Ljava/lang/Throwable;")
+            assert throwable
+            get_message = await self.get_first_method_id(throwable, "getMessage")
+            assert get_message
+            resp = await self.send_command(
+                Commands.INVOKE_METHOD,
+                exception
+                + thread_id
+                + throwable
+                + get_message
+                + b"\x00\x00\x00\x00"
+                + b"\x00\x00\x00\x00",
+            )
+            assert resp.message == 0
+            assert resp.data[-self.sizes.object:] == b"\x00\x00\x00\x00\x00\x00\x00\x00"
+            resp = await self.send_command(Commands.STRING_VALUE, resp.data[1:self.sizes.reference+1])
+            val = _read_str(io.BytesIO(resp.data))
+            raise RuntimeError(f"Method invocation of {class_sig}.{method_name} failed: {val}")
+
+        return resp.data[:-(self.sizes.object + 1)]
+
+    async def exec(self, thread_id: bytes, cmd: str) -> int:
         """
         Execute a command using `Runtime.getRuntime().exec(cmd)`.
         """
-        runtime_class_id = await self.get_first_class_id("Ljava/lang/Runtime;")
-        assert runtime_class_id
-        runtime = await self.get_runtime(thread_id, runtime_class_id)
-        assert runtime
-
-        exec = await self.get_first_method_id(runtime_class_id, "exec")
-        assert exec
-
+        runtime = await self.get_runtime(thread_id)
         cmd_str = await self.create_string(cmd)
-        resp = await self.send_command(
-            Commands.INVOKE_METHOD,
-            runtime
-            + thread_id
-            + runtime_class_id
-            + exec
-            + b"\x00\x00\x00\x01"
-            + b"L"
-            + cmd_str
-            + b"\x00\x00\x00\x00",
-        )
-        assert resp.message == 0
-        assert resp.data[self.sizes.object + 1:] == b"L" + b"\x00" * self.sizes.object
-        process = resp.data[1: self.sizes.object + 1]
+
+        resp = await self.invoke_method(runtime, thread_id, "Ljava/lang/Runtime;", "exec", b"\x00\x00\x00\x01L" + cmd_str)
+        process = resp[1:]
 
         # wait for process to exit
-        process_class_id = await self.get_first_class_id("Ljava/lang/Process;")
-        assert process_class_id
-        wait_for = await self.get_first_method_id(process_class_id, "waitFor")
-        assert wait_for
+        resp = await self.invoke_method(process, thread_id, "Ljava/lang/Process;", "waitFor")
+        (exit_code,) = struct.unpack_from("!I", resp, 1)
 
-        resp = await self.send_command(
-            Commands.INVOKE_METHOD,
-            process
-            + thread_id
-            + process_class_id
-            + wait_for
-            + b"\x00\x00\x00\x00"
-            + b"\x00\x00\x00\x00",
-        )
-        assert resp.message == 0
-        assert resp.data == b"I\x00\x00\x00\x00L\x00\x00\x00\x00\x00\x00\x00\x00"
+        if exit_code:
+            logging.error(f"Command {cmd!r} return exit code {exit_code}")
+        return exit_code
 
     async def load(self, thread_id: bytes, path: str):
         """
         Load a library using `Runtime.getRuntime().load(cmd)`.
         """
-        class_id = await self.get_first_class_id("Ljava/lang/Runtime;")
-        assert class_id
-        runtime_id = await self.get_runtime(thread_id, class_id)
+        runtime_id = await self.get_runtime(thread_id)
         assert runtime_id
 
-        load = await self.get_first_method_id(class_id, "load")
-        assert load
-
         cmd_str = await self.create_string(path)
-        resp = await self.send_command(
-            Commands.INVOKE_METHOD,
-            runtime_id
-            + thread_id
-            + class_id
-            + load
-            + b"\x00\x00\x00\x01"
-            + b"L"
-            + cmd_str
-            + b"\x00\x00\x00\x00",
-        )
-        try:
-            assert resp.message == 0
-            assert resp.data == b"VL" + b"\x00" * self.sizes.object
-        except AssertionError:
-            log.error(f"Failed to load library: {resp}")
-            raise
+        args = b"\x00\x00\x00\x01L" + cmd_str
+        resp = await self.invoke_method(runtime_id, thread_id, "Ljava/lang/Runtime;", "load", args)
+        print(f"{resp=}")
+        assert resp == b"V"
 
 
 @dataclass
@@ -422,6 +434,7 @@ class Commands(enum.IntEnum):
     INVOKE_METHOD = 0x0906
     SET_BREAKPOINT = 0x0F01
     EVENT_COMPOSITE = 0x4064
+    STRING_VALUE = 0x0A01
 
 
 def _read_str(buf: io.BytesIO) -> str:
