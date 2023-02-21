@@ -1,5 +1,7 @@
+from __future__ import annotations
 import asyncio
 import logging
+import re
 import subprocess
 from pathlib import Path
 from time import sleep
@@ -141,6 +143,13 @@ def start_app_on_device(package_name: str) -> None:
     asyncio.run(inject_frida())
 
 
+def get_packages() -> list[str]:
+    packages = adb("shell pm list packages").stdout.strip().splitlines()
+    return [
+        p.removeprefix("package:") for p in sorted(packages)
+    ]
+
+
 @click.group()
 def cli():
     rich.traceback.install(suppress=[click, click.core])
@@ -245,6 +254,43 @@ def push_resources():
 def start_app(package_name):
     """Start app on device and inject Frida gadget."""
     start_app_on_device(package_name)
+    logging.info("All done! 🎉")
+
+
+@cli.command()
+@verbosity_option
+def list_packages():
+    """List all packages installed on the device."""
+    ensure_device_connected()
+    logging.info(f"Enumerating packages...")
+    print("\n".join(get_packages()))
+    logging.info("All done! 🎉")
+
+
+@cli.command()
+@verbosity_option
+@force_option
+@click.argument("package", type=str)
+@click.argument("outfile", type=click.Path(path_type=Path))
+def get_apk(package, outfile):
+    """Get an APK file from the device."""
+    ensure_device_connected()
+
+    logging.info("Getting package info...")
+    if package not in get_packages():
+        raise RuntimeError(f"Could not find package: {package}")
+
+    package_info = adb(f"shell pm path {package}").stdout
+    if not package_info.startswith("package:"):
+        raise RuntimeError(f"Unxepected output from pm path: {package_info!r}")
+    package_path = package_info.removeprefix("package:").strip()
+
+    if outfile.exists():
+        if force or click.confirm(f"Delete existing file: {outfile.name}?", abort=True):
+            outfile.unlink()
+
+    logging.info(f"Pulling package...")
+    adb(f"pull {package_path} {outfile}")
     logging.info("All done! 🎉")
 
 

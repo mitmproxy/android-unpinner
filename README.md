@@ -32,10 +32,9 @@ $ android-unpinner all httptoolkit-pinning-demo.apk
 
 See `android-unpinner --help` for usage details.
 
-You can download APKs from the internet, for example manually from [apkpure.com](https://apkpure.com/) or automatically
+You can pull APKs from your device using `android-unpinner list-packages` and `android-unpinner get-apk`.
+Alternatively, you can download APKs from the internet, for example manually from [apkpure.com](https://apkpure.com/) or automatically
 using [apkeep](https://github.com/EFForg/apkeep).  
-Alternatively, you can [pull APKs from your device using adb](https://stackoverflow.com/a/18003462/934719). A copy of 
-`adb` is available in `android_unpinner/vendor/platform_tools`.
 
 ## Comparison 
 
