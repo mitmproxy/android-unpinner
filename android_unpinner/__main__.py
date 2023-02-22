@@ -1,7 +1,7 @@
 from __future__ import annotations
+
 import asyncio
 import logging
-import re
 import subprocess
 from pathlib import Path
 from time import sleep
@@ -11,8 +11,11 @@ import rich_click as click
 from rich.logging import RichHandler
 
 from . import jdwplib
-from .vendor import build_tools, frida_tools, gadget_config_file, gadget_files
-from .vendor.platform_tools import adb, adb_binary
+from .vendor import build_tools
+from .vendor import frida_tools
+from .vendor import gadget_config_file
+from .vendor import gadget_files
+from .vendor.platform_tools import adb
 
 here = Path(__file__).absolute().parent
 LIBGADGET = "libgadget.so"
@@ -26,7 +29,7 @@ def patch_apk_file(infile: Path, outfile: Path) -> None:
     Patch the APK to be debuggable.
     """
     if outfile.exists():
-        if force or click.confirm(f"Delete existing file: {outfile.name}?", abort=True):
+        if force or click.confirm(f"Overwrite existing file: {outfile.absolute()}?", abort=True):
             outfile.unlink()
 
     logging.info(f"Make APK debuggable...")
@@ -42,6 +45,23 @@ def patch_apk_file(infile: Path, outfile: Path) -> None:
     logging.info(f"Created patched APK: {outfile}")
 
 
+def patch_apk_files(apks: list[Path]) -> list[Path]:
+    patched: list[Path] = []
+    for apk in apks:
+        if apk.stem.endswith(".unpinned"):
+            logging.warning(f"Skipping {apk} (filename indicates it is already patched).")
+            continue
+
+        outfile = apk.with_suffix(".unpinned" + apk.suffix)
+        if outfile.exists():
+            logging.warning(f"Reusing existing file: {outfile}")
+        else:
+            logging.info(f"Patching {apk}...")
+            patch_apk_file(apk, outfile)
+        patched.append(outfile)
+    return patched
+
+
 def ensure_device_connected() -> None:
     try:
         adb("get-state")
@@ -49,27 +69,29 @@ def ensure_device_connected() -> None:
         raise RuntimeError("No device connected via ADB.")
 
 
-def install_apk(apk_file: Path) -> None:
+def install_apk(apk_files: list[Path]) -> None:
     """
     Install the APK on the device, replacing any existing installation.
     """
     ensure_device_connected()
 
-    if not force:
-        click.confirm(
-            f"About to install patched APK. This removes the existing app with all its data. Continue?",
-            abort=True,
-        )
+    package_name = build_tools.package_name(apk_files[0])
 
-    package_name = build_tools.package_name(apk_file)
-    logging.info("Uninstall existing app...")
-    try:
+    if package_name in get_packages():
+        if not force:
+            click.confirm(
+                f"About to install patched APK. This removes the existing app with all its data. Continue?",
+                abort=True,
+            )
+
+        logging.info("Uninstall existing app...")
         adb(f"uninstall {package_name}")
-    except subprocess.CalledProcessError:
-        logging.info("Uninstall failed, looks like it was not installed after all.")
 
-    logging.info(f"Install {apk_file.name}...")
-    adb(f"install --no-incremental {apk_file}")
+    logging.info(f"Installing {package_name}...")
+    if len(apk_files) > 1:
+        adb(f"install-multiple --no-incremental {' '.join(str(x) for x in apk_files)}")
+    else:
+        adb(f"install --no-incremental {apk_files[0]}")
 
 
 def copy_files() -> None:
@@ -203,14 +225,15 @@ force_option = click.option(
 @cli.command("all")
 @verbosity_option
 @force_option
-@click.argument("apk-file", type=click.Path(path_type=Path, exists=True))
-def all_cmd(apk_file):
+@click.argument("apk-files", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True)
+def all_cmd(apk_files):
     """Do everything in a single shot."""
-    package_name = build_tools.package_name(apk_file)
-    apk_patched = apk_file.with_suffix(".unpinned" + apk_file.suffix)
-    logging.info(f"Target: {apk_file.name} ({package_name})")
-
-    patch_apk_file(apk_file, apk_patched)
+    package_names = {build_tools.package_name(apk) for apk in apk_files}
+    if len(package_names) > 1:
+        raise RuntimeError("Detected multiple APKs with different package names, aborting.")
+    package_name = next(iter(package_names))
+    logging.info(f"Target: {package_name}")
+    apk_patched = patch_apk_files(apk_files)
     install_apk(apk_patched)
     copy_files()
     start_app_on_device(package_name)
@@ -230,11 +253,10 @@ def install_cmd(apk_file):
 @cli.command()
 @verbosity_option
 @force_option
-@click.argument("infile", type=click.Path(path_type=Path, exists=True))
-@click.argument("outfile", type=click.Path(path_type=Path))
-def patch_apk(infile, outfile):
+@click.argument("apks", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True)
+def patch_apks(apks):
     """Patch an APK file to be debuggable."""
-    patch_apk_file(infile, outfile)
+    patch_apk_files(apks)
     logging.info("All done! 🎉")
 
 
@@ -268,12 +290,19 @@ def list_packages():
 
 
 @cli.command()
+@click.argument("apk-file", type=click.Path(path_type=Path, exists=True))
+def package_name(apk_file):
+    """Get the package name for a local APK."""
+    print(build_tools.package_name(apk_file))
+
+
+@cli.command()
 @verbosity_option
 @force_option
 @click.argument("package", type=str)
-@click.argument("outfile", type=click.Path(path_type=Path))
-def get_apk(package, outfile):
-    """Get an APK file from the device."""
+@click.argument("outdir", type=click.Path(path_type=Path, file_okay=False))
+def get_apks(package, outdir):
+    """Get all (split) APKs for a specific package."""
     ensure_device_connected()
 
     logging.info("Getting package info...")
@@ -283,14 +312,18 @@ def get_apk(package, outfile):
     package_info = adb(f"shell pm path {package}").stdout
     if not package_info.startswith("package:"):
         raise RuntimeError(f"Unxepected output from pm path: {package_info!r}")
-    package_path = package_info.removeprefix("package:").strip()
+    apks = [
+        p.removeprefix("package:")
+        for p in package_info.splitlines()
+    ]
+    for apk in apks:
+        logging.info(f"Getting {apk}...")
+        outfile = outdir / Path(apk).name
+        if outfile.exists():
+            if force or click.confirm(f"Overwrite existing file: {outfile.absolute()}?", abort=True):
+                outfile.unlink()
+        adb(f"pull {apk} {outfile.absolute()}")
 
-    if outfile.exists():
-        if force or click.confirm(f"Delete existing file: {outfile.name}?", abort=True):
-            outfile.unlink()
-
-    logging.info(f"Pulling package...")
-    adb(f"pull {package_path} {outfile}")
     logging.info("All done! 🎉")
 
 
