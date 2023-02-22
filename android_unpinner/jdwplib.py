@@ -62,15 +62,15 @@ class JDWPClient:
         self._replies: dict[int, Packet] = {}
         self.current_id: int = 0
         self.server_commands: asyncio.Queue[Packet] = asyncio.Queue()
-        self._classes_cache = {}
-        self._methods_cache = {}
+        self._classes_cache: dict[str, bytes] = {}
+        self._methods_cache: dict[bytes, bytes] = {}
 
     @classmethod
     async def connect_adb(cls, adb_binary: Path | None = None) -> JDWPClient:
         """Take the first (!) debuggable PID found via ADB, forward it via TCP, and connect to it."""
         log.info("Obtaining jdwp pid from adb...")
         if adb_binary is None:
-            adb_binary = "adb"
+            adb_binary = Path("adb")
 
         async def try_read_pid() -> int:
             proc = await asyncio.create_subprocess_shell(
@@ -78,6 +78,7 @@ class JDWPClient:
                 stdout=asyncio.subprocess.PIPE,
             )
             try:
+                assert proc.stdout
                 pid = int(await proc.stdout.readline())
             finally:
                 proc.kill()
@@ -100,6 +101,7 @@ class JDWPClient:
             f"{adb_binary} forward tcp:0 jdwp:{pid}",
             stdout=asyncio.subprocess.PIPE,
         )
+        assert proc.stdout
         local_port = int(await proc.stdout.readline())
         await proc.wait()
         log.info(f"{local_port=}")
@@ -156,15 +158,15 @@ class JDWPClient:
         """
         Send a generic request to the VM, wait for the response, and return it.
         """
-        command = Packet(self.current_id, 0, command.value, data)
-        log.debug(f">> {command}")
-        self.writer.write(bytes(command))
-        self._reply_waiter[command.id] = asyncio.Event()
+        cmd = Packet(self.current_id, 0, command.value, data)
+        log.debug(f">> {cmd}")
+        self.writer.write(bytes(cmd))
+        self._reply_waiter[cmd.id] = asyncio.Event()
         self.current_id += 1
 
-        await self._reply_waiter[command.id].wait()
-        del self._reply_waiter[command.id]
-        return self._replies.pop(command.id)
+        await self._reply_waiter[cmd.id].wait()
+        del self._reply_waiter[cmd.id]
+        return self._replies.pop(cmd.id)
 
     async def get_first_class_id(self, cls_sig: str) -> bytes | None:
         """
@@ -224,7 +226,9 @@ class JDWPClient:
         This dance yields a correct thread id.
         """
         cls_id = await self.get_first_class_id(cls_sig)
+        assert cls_id
         meth_id = await self.get_first_method_id(cls_id, method_name)
+        assert meth_id
 
         # set breakpoint
         resp = await self.send_command(
@@ -485,5 +489,5 @@ def _read_str(buf: io.BytesIO) -> str:
 
 def _encode_jdwp_str(x: str) -> bytes:
     """Encode a string as length-prefixed UTF8."""
-    x = x.encode()
-    return len(x).to_bytes(4, "big") + x
+    xb = x.encode()
+    return len(xb).to_bytes(4, "big") + xb
