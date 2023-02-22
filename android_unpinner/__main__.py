@@ -48,6 +48,9 @@ def patch_apk_file(infile: Path, outfile: Path) -> None:
 
 
 def patch_apk_files(apks: list[Path]) -> list[Path]:
+    """
+    Patch multiple APK files and return the list of patched filenames.
+    """
     patched: list[Path] = []
     for apk in apks:
         if apk.stem.endswith(".unpinned"):
@@ -228,10 +231,17 @@ force_option = click.option(
 @verbosity_option
 @force_option
 @click.argument(
-    "apk-files", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True
+    "apk-files",
+    type=click.Path(path_type=Path, exists=True),
+    nargs=-1,
+    required=True,
 )
-def all_cmd(apk_files):
-    """Do everything in a single shot."""
+def all_cmd(apk_files: list[Path]) -> None:
+    """
+    Patch a local APK, then install and start it.
+
+    You may pass multiple files for the same package in case of split APKs.
+    """
     package_names = {build_tools.package_name(apk) for apk in apk_files}
     if len(package_names) > 1:
         raise RuntimeError(
@@ -249,10 +259,19 @@ def all_cmd(apk_files):
 @cli.command("install")
 @verbosity_option
 @force_option
-@click.argument("apk-file", type=click.Path(path_type=Path, exists=True))
-def install_cmd(apk_file):
-    """Install an apk on the device."""
-    install_apk(apk_file)
+@click.argument(
+    "apk-files",
+    type=click.Path(path_type=Path, exists=True),
+    nargs=-1,
+    required=True,
+)
+def install_cmd(apk_files: list[Path]) -> None:
+    """
+    Install a package on the device.
+
+    You may pass multiple files for the same package in case of split APKs.
+    """
+    install_apk(apk_files)
     logging.info("All done! 🎉")
 
 
@@ -260,9 +279,12 @@ def install_cmd(apk_file):
 @verbosity_option
 @force_option
 @click.argument(
-    "apks", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True
+    "apks",
+    type=click.Path(path_type=Path, exists=True),
+    nargs=-1,
+    required=True,
 )
-def patch_apks(apks):
+def patch_apks(apks: list[Path]) -> None:
     """Patch an APK file to be debuggable."""
     patch_apk_files(apks)
     logging.info("All done! 🎉")
@@ -271,7 +293,7 @@ def patch_apks(apks):
 @cli.command()
 @verbosity_option
 @force_option
-def push_resources():
+def push_resources() -> None:
     """Copy Frida gadget and scripts to device."""
     copy_files()
     logging.info("All done! 🎉")
@@ -281,7 +303,7 @@ def push_resources():
 @verbosity_option
 @force_option
 @click.argument("package-name")
-def start_app(package_name):
+def start_app(package_name: str) -> None:
     """Start app on device and inject Frida gadget."""
     start_app_on_device(package_name)
     logging.info("All done! 🎉")
@@ -289,7 +311,7 @@ def start_app(package_name):
 
 @cli.command()
 @verbosity_option
-def list_packages():
+def list_packages() -> None:
     """List all packages installed on the device."""
     ensure_device_connected()
     logging.info(f"Enumerating packages...")
@@ -299,8 +321,8 @@ def list_packages():
 
 @cli.command()
 @click.argument("apk-file", type=click.Path(path_type=Path, exists=True))
-def package_name(apk_file):
-    """Get the package name for a local APK."""
+def package_name(apk_file: Path) -> None:
+    """Get the package name for a local APK file."""
     print(build_tools.package_name(apk_file))
 
 
@@ -309,8 +331,8 @@ def package_name(apk_file):
 @force_option
 @click.argument("package", type=str)
 @click.argument("outdir", type=click.Path(path_type=Path, file_okay=False))
-def get_apks(package, outdir):
-    """Get all (split) APKs for a specific package."""
+def get_apks(package: str, outdir: Path) -> None:
+    """Get all APKs for a specific package from the device."""
     ensure_device_connected()
 
     logging.info("Getting package info...")
