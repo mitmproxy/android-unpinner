@@ -8,7 +8,8 @@ here = Path(__file__).parent
 long_description = (here / "README.md").read_text("utf8")
 
 VERSION = re.search(
-    r'__version__ = "(.+?)"', (here / "android_unpinner" / "__init__.py").read_text("utf8")
+    r'__version__ = "(.+?)"',
+    (here / "android_unpinner" / "__init__.py").read_text("utf8"),
 ).group(1)
 
 setup(
@@ -48,10 +49,12 @@ setup(
         ]
     ),
     include_package_data=True,
-    entry_points={"console_scripts": [
-        "android-unpinner = android_unpinner.__main__:cli",
-        "aup = android_unpinner.__main__:cli",
-    ]},
+    entry_points={
+        "console_scripts": [
+            "android-unpinner = android_unpinner.__main__:cli",
+            "aup = android_unpinner.__main__:cli",
+        ]
+    },
     python_requires=">=3.10",
     install_requires=[
         "rich_click",

@@ -48,6 +48,7 @@ class JDWPClient:
         ...
     ```
     """
+
     sizes: IDSizes
 
     def __init__(
@@ -178,7 +179,7 @@ class JDWPClient:
             if not classes:
                 raise ValueError(f"Class not found: {cls_sig}")
             else:
-                self._classes_cache[cls_sig] = resp.data[5: 5 + self.sizes.reference]
+                self._classes_cache[cls_sig] = resp.data[5 : 5 + self.sizes.reference]
 
         return self._classes_cache[cls_sig]
 
@@ -211,10 +212,7 @@ class JDWPClient:
             n = _read_str(buf)
             sig = _read_str(buf)
             (mod_bits,) = struct.unpack("!I", buf.read(4))
-            is_a_match = (
-                name == n and
-                (signature is None or signature == sig)
-            )
+            is_a_match = name == n and (signature is None or signature == sig)
             if is_a_match:
                 return id
 
@@ -267,7 +265,9 @@ class JDWPClient:
         """
         runtime_class_id = await self.get_first_class_id("Ljava/lang/Runtime;")
         assert runtime_class_id
-        get_runtime = await self.get_first_method_id(runtime_class_id, "getRuntime()Ljava/lang/Runtime;")
+        get_runtime = await self.get_first_method_id(
+            runtime_class_id, "getRuntime()Ljava/lang/Runtime;"
+        )
         assert get_runtime
 
         resp = await self.send_command(
@@ -278,7 +278,7 @@ class JDWPClient:
             + b"\x00\x00\x00\x00"
             + b"\x00\x00\x00\x00",
         )
-        runtime_id = resp.data[1: 1 + self.sizes.object]
+        runtime_id = resp.data[1 : 1 + self.sizes.object]
         return runtime_id
 
     async def create_string(self, s: str) -> bytes:
@@ -313,11 +313,13 @@ class JDWPClient:
         )
         assert resp.message == 0
 
-        exception = resp.data[-self.sizes.object:]
+        exception = resp.data[-self.sizes.object :]
         if exception != b"\x00\x00\x00\x00\x00\x00\x00\x00":
             throwable = await self.get_first_class_id("Ljava/lang/Throwable;")
             assert throwable
-            get_message = await self.get_first_method_id(throwable, "toString()Ljava/lang/String;")
+            get_message = await self.get_first_method_id(
+                throwable, "toString()Ljava/lang/String;"
+            )
             assert get_message
             resp = await self.send_command(
                 Commands.INVOKE_METHOD,
@@ -329,12 +331,18 @@ class JDWPClient:
                 + b"\x00\x00\x00\x00",
             )
             assert resp.message == 0
-            assert resp.data[-self.sizes.object:] == b"\x00\x00\x00\x00\x00\x00\x00\x00"
-            resp = await self.send_command(Commands.STRING_VALUE, resp.data[1:self.sizes.reference+1])
+            assert (
+                resp.data[-self.sizes.object :] == b"\x00\x00\x00\x00\x00\x00\x00\x00"
+            )
+            resp = await self.send_command(
+                Commands.STRING_VALUE, resp.data[1 : self.sizes.reference + 1]
+            )
             val = _read_str(io.BytesIO(resp.data))
-            raise RuntimeError(f"Method invocation of {class_sig}.{method_sig} failed: {val}")
+            raise RuntimeError(
+                f"Method invocation of {class_sig}.{method_sig} failed: {val}"
+            )
 
-        return resp.data[:-(self.sizes.object + 1)]
+        return resp.data[: -(self.sizes.object + 1)]
 
     async def exec(self, thread_id: bytes, cmd: str) -> int:
         """
@@ -348,12 +356,14 @@ class JDWPClient:
             thread_id,
             "Ljava/lang/Runtime;",
             "exec(Ljava/lang/String;)Ljava/lang/Process;",
-            b"\x00\x00\x00\x01L" + cmd_str
+            b"\x00\x00\x00\x01L" + cmd_str,
         )
         process = resp[1:]
 
         # wait for process to exit
-        resp = await self.invoke_method(process, thread_id, "Ljava/lang/Process;", "waitFor()I")
+        resp = await self.invoke_method(
+            process, thread_id, "Ljava/lang/Process;", "waitFor()I"
+        )
         (exit_code,) = struct.unpack_from("!I", resp, 1)
 
         if exit_code:
@@ -369,7 +379,13 @@ class JDWPClient:
 
         cmd_str = await self.create_string(path)
         args = b"\x00\x00\x00\x01L" + cmd_str
-        resp = await self.invoke_method(runtime_id, thread_id, "Ljava/lang/Runtime;", "load(Ljava/lang/String;)V", args)
+        resp = await self.invoke_method(
+            runtime_id,
+            thread_id,
+            "Ljava/lang/Runtime;",
+            "load(Ljava/lang/String;)V",
+            args,
+        )
         assert resp == b"V"
 
 
@@ -380,6 +396,7 @@ class Packet:
 
     <https://docs.oracle.com/en/java/javase/17/docs/specs/jdwp/jdwp-spec.html#jdwp-packets>
     """
+
     id: int
     flags: int
     message: int
@@ -421,6 +438,7 @@ class IDSizes:
 
     <https://docs.oracle.com/en/java/javase/17/docs/specs/jdwp/jdwp-protocol.html#JDWP_VirtualMachine_IDSizes>
     """
+
     field: int
     method: int
     object: int
@@ -445,6 +463,7 @@ class Commands(enum.IntEnum):
     For example, the IDSizes command is command set 1 and command 7. We represent it as
     `0x0107`.
     """
+
     VERSION = 0x0101
     CLASSES_BY_SIGNATURE = 0x0102
     GET_ID_SIZES = 0x0107

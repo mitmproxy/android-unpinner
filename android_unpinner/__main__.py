@@ -29,7 +29,9 @@ def patch_apk_file(infile: Path, outfile: Path) -> None:
     Patch the APK to be debuggable.
     """
     if outfile.exists():
-        if force or click.confirm(f"Overwrite existing file: {outfile.absolute()}?", abort=True):
+        if force or click.confirm(
+            f"Overwrite existing file: {outfile.absolute()}?", abort=True
+        ):
             outfile.unlink()
 
     logging.info(f"Make APK debuggable...")
@@ -49,7 +51,9 @@ def patch_apk_files(apks: list[Path]) -> list[Path]:
     patched: list[Path] = []
     for apk in apks:
         if apk.stem.endswith(".unpinned"):
-            logging.warning(f"Skipping {apk} (filename indicates it is already patched).")
+            logging.warning(
+                f"Skipping {apk} (filename indicates it is already patched)."
+            )
             continue
 
         outfile = apk.with_suffix(".unpinned" + apk.suffix)
@@ -167,9 +171,7 @@ def start_app_on_device(package_name: str) -> None:
 
 def get_packages() -> list[str]:
     packages = adb("shell pm list packages").stdout.strip().splitlines()
-    return [
-        p.removeprefix("package:") for p in sorted(packages)
-    ]
+    return [p.removeprefix("package:") for p in sorted(packages)]
 
 
 @click.group()
@@ -225,12 +227,16 @@ force_option = click.option(
 @cli.command("all")
 @verbosity_option
 @force_option
-@click.argument("apk-files", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True)
+@click.argument(
+    "apk-files", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True
+)
 def all_cmd(apk_files):
     """Do everything in a single shot."""
     package_names = {build_tools.package_name(apk) for apk in apk_files}
     if len(package_names) > 1:
-        raise RuntimeError("Detected multiple APKs with different package names, aborting.")
+        raise RuntimeError(
+            "Detected multiple APKs with different package names, aborting."
+        )
     package_name = next(iter(package_names))
     logging.info(f"Target: {package_name}")
     apk_patched = patch_apk_files(apk_files)
@@ -253,7 +259,9 @@ def install_cmd(apk_file):
 @cli.command()
 @verbosity_option
 @force_option
-@click.argument("apks", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True)
+@click.argument(
+    "apks", type=click.Path(path_type=Path, exists=True), nargs=-1, required=True
+)
 def patch_apks(apks):
     """Patch an APK file to be debuggable."""
     patch_apk_files(apks)
@@ -312,15 +320,14 @@ def get_apks(package, outdir):
     package_info = adb(f"shell pm path {package}").stdout
     if not package_info.startswith("package:"):
         raise RuntimeError(f"Unxepected output from pm path: {package_info!r}")
-    apks = [
-        p.removeprefix("package:")
-        for p in package_info.splitlines()
-    ]
+    apks = [p.removeprefix("package:") for p in package_info.splitlines()]
     for apk in apks:
         logging.info(f"Getting {apk}...")
         outfile = outdir / Path(apk).name
         if outfile.exists():
-            if force or click.confirm(f"Overwrite existing file: {outfile.absolute()}?", abort=True):
+            if force or click.confirm(
+                f"Overwrite existing file: {outfile.absolute()}?", abort=True
+            ):
                 outfile.unlink()
         adb(f"pull {apk} {outfile.absolute()}")
 

@@ -36,16 +36,6 @@ You can pull APKs from your device using `android-unpinner list-packages` and `a
 Alternatively, you can download APKs from the internet, for example manually from [apkpure.com](https://apkpure.com/) or automatically
 using [apkeep](https://github.com/EFForg/apkeep).  
 
-#### Usage with App Bundles / Split APKs
-
-`android-unpinner` does work with App Bundles / Split APKs, but the UX is not great.
-You need to:
-
-1. Manually download/obtain all split APKs.
-2. Run `android-unpinner patch-apk` on every APK.
-3. Run `adb install-multiple [APK FILES]` to install them.
-4. `android-unpinner start-app` to start the app.
-
 ## Comparison 
 
 **Compared to using a rooted device, android-unpinner...**
