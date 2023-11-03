@@ -13,7 +13,7 @@ from rich.logging import RichHandler
 from . import jdwplib
 from .vendor import build_tools
 from .vendor import frida_tools
-from .vendor import gadget_config_file
+from .vendor import gadget_config_file_listen, gadget_config_file_script_directory
 from .vendor import gadget_files
 from .vendor.platform_tools import adb
 
@@ -22,6 +22,7 @@ LIBGADGET = "libgadget.so"
 LIBGADGET_CONF = "libgadget.config.so"
 
 force = False
+gadget_config_file = gadget_config_file_script_directory
 
 
 def patch_apk_file(infile: Path, outfile: Path) -> None:
@@ -227,9 +228,25 @@ force_option = click.option(
 )
 
 
+def _listen(ctx, param, val):
+    global gadget_config_file
+    gadget_config_file = gadget_config_file_listen
+
+
+listen_option = click.option(
+    "-l",
+    "--listen",
+    help="Configure the Frida gadget to expose a server instead of running unpinning scripts.",
+    is_flag=True,
+    callback=_listen,
+    expose_value=False,
+)
+
+
 @cli.command("all")
 @verbosity_option
 @force_option
+@listen_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
@@ -293,6 +310,7 @@ def patch_apks(apks: list[Path]) -> None:
 @cli.command()
 @verbosity_option
 @force_option
+@listen_option
 def push_resources() -> None:
     """Copy Frida gadget and scripts to device."""
     copy_files()
