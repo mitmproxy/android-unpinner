@@ -236,7 +236,7 @@ def _listen(ctx, param, val):
 listen_option = click.option(
     "-l",
     "--listen",
-    help="Specify frida-gadget's interaction mode to listening",
+    help="Configure the Frida gadget to expose a server instead of running unpinning scripts.",
     is_flag=True,
     callback=_listen,
     expose_value=False,
