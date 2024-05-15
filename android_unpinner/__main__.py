@@ -131,7 +131,8 @@ def start_app_on_device(package_name: str) -> None:
     ensure_device_connected()
     logging.info("Start app (suspended)...")
     adb(f"shell am set-debug-app -w {package_name}")
-    activity = adb(f"shell cmd package resolve-activity --brief {package_name} | tail -n 1").stdout.strip()
+    activity = adb(f"shell cmd package resolve-activity --brief {package_name}").stdout.split("\n")[1].strip()
+    print(activity)
     adb(f"shell am start -n {activity}")
 
     logging.info("Obtain process id...")
@@ -151,7 +152,7 @@ def start_app_on_device(package_name: str) -> None:
     logging.debug(f"{local_port=}")
 
     async def inject_frida():
-        logging.info("Establish Java Debug Wire Protocol Connection over ADB...")
+        logging.info(f"Establish Java Debug Wire Protocol Connection over ADB on port {local_port}...")
         async with jdwplib.JDWPClient("127.0.0.1", local_port) as client:
             logging.info("Advance until android.app.Activity.onCreate...")
             thread_id = await client.advance_to_breakpoint(
