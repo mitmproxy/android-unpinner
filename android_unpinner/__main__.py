@@ -131,7 +131,7 @@ def start_app_on_device(package_name: str) -> None:
     ensure_device_connected()
     logging.info("Start app (suspended)...")
     adb(f"shell am set-debug-app -w {package_name}")
-    activity = adb(f"shell cmd package resolve-activity --brief {package_name} | tail -n 1").stdout.strip()
+    activity = adb(f"shell cmd \"package resolve-activity --brief {package_name} | tail -n 1\"").stdout.strip()
     adb(f"shell am start -n {activity}")
 
     logging.info("Obtain process id...")
