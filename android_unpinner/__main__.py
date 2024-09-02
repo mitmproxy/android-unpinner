@@ -231,7 +231,8 @@ force_option = click.option(
 
 def _listen(ctx, param, val):
     global gadget_config_file
-    gadget_config_file = gadget_config_file_listen
+    if val:
+        gadget_config_file = gadget_config_file_listen
 
 
 listen_option = click.option(
