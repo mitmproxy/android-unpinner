@@ -231,7 +231,8 @@ force_option = click.option(
 
 def _listen(ctx, param, val):
     global gadget_config_file
-    gadget_config_file = gadget_config_file_listen
+    if val:
+        gadget_config_file = gadget_config_file_listen
 
 
 listen_option = click.option(
@@ -247,6 +248,7 @@ listen_option = click.option(
 @cli.command("all")
 @verbosity_option
 @force_option
+@listen_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
