@@ -247,7 +247,6 @@ listen_option = click.option(
 @cli.command("all")
 @verbosity_option
 @force_option
-@listen_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
