@@ -17,7 +17,6 @@ setup(
     author="Maximilian Hils",
     author_email="android-unpinner@maximilianhils.com",
     version=VERSION,
-    license="MIT",
     description="Android Certificate Pinning Unpinner",
     long_description=long_description,
     long_description_content_type="text/markdown",
