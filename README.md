@@ -71,7 +71,7 @@ This tool stands on the shoulders of giants.
   (Apache-2.0 License).
 - `scripts/httptoolkit-unpinner.js` is a copy of HTTP Toolkit's excellent unpinning script available at
   https://github.com/httptoolkit/frida-android-unpinning/ 
-  (Apache-2.0 License).
+  (AGPL License, Version 3.0 or later).
 - `android_unpinner/vendor/frida/` contains the fantastic Frida gadgets available at https://frida.re/
   (wxWindows Library Licence, Version 3.1).
 - `android_unpinner/vendor/frida-tools/` is adapted from https://github.com/frida/frida-tools 
