@@ -1,548 +1,542 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Vendored from the fantastic HTTP Toolkit:
-// https://github.com/httptoolkit/frida-android-unpinning
-/*
- * This script combines, fixes & extends a long list of other scripts, most notably including:
+// https://github.com/httptoolkit/frida-interception-and-unpinning
+/**************************************************************************************************
  *
- * - https://codeshare.frida.re/@akabe1/frida-multiple-unpinning/
- * - https://codeshare.frida.re/@avltree9798/universal-android-ssl-pinning-bypass/
- * - https://pastebin.com/TVJD63uM
- */
+ * This script defines a large set of targeted certificate unpinning hooks: matching specific
+ * methods in certain classes, and transforming their behaviour to ensure that restrictions to
+ * TLS trust are disabled.
+ *
+ * This does not disable TLS protections completely - each hook is designed to disable only
+ * *additional* restrictions, and to explicitly trust the certificate provided as CERT_PEM in the
+ * config.js configuration file, preserving normal TLS protections wherever possible, even while
+ * allowing for controlled MitM of local traffic.
+ *
+ * The file consists of a few general-purpose methods, then a data structure declaratively
+ * defining the classes & methods to match, and how to transform them, and then logic at the end
+ * which uses this data structure, applying the transformation for each found match to the
+ * target process.
+ *
+ * For more details on what was matched, and log output when each hooked method is actually used,
+ * enable DEBUG_MODE in config.js, and watch the Frida output after running this script.
+ *
+ * Source available at https://github.com/httptoolkit/frida-interception-and-unpinning/
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ * SPDX-FileCopyrightText: Tim Perry <tim@httptoolkit.com>
+ *
+ *************************************************************************************************/
 
-setTimeout(function () {
-    Java.perform(function () {
-        console.log("---");
-        console.log("Unpinning Android app...");
+function buildX509CertificateFromBytes(certBytes) {
+    const ByteArrayInputStream = Java.use('java.io.ByteArrayInputStream');
+    const CertFactory = Java.use('java.security.cert.CertificateFactory');
+    const certFactory = CertFactory.getInstance("X.509");
+    return certFactory.generateCertificate(ByteArrayInputStream.$new(certBytes));
+}
 
-        /// -- Generic hook to protect against SSLPeerUnverifiedException -- ///
+function getCustomTrustManagerFactory() {
+    // This is the one X509Certificate that we want to trust. No need to trust others (we should capture
+    // _all_ TLS traffic) and risky to trust _everything_ (risks interception between device & proxy, or
+    // worse: some traffic being unintercepted & sent as HTTPS with TLS effectively disabled over the
+    // real web - potentially exposing auth keys, private data and all sorts).
+    const certBytes = Java.use("java.lang.String").$new(CERT_PEM).getBytes();
+    const trustedCACert = buildX509CertificateFromBytes(certBytes);
 
-        // In some cases, with unusual cert pinning approaches, or heavy obfuscation, we can't
-        // match the real method & package names. This is a problem! Fortunately, we can still
-        // always match built-in types, so here we spot all failures that use the built-in cert
-        // error type (notably this includes OkHttp), and after the first failure, we dynamically
-        // generate & inject a patch to completely disable the method that threw the error.
-        try {
-            const UnverifiedCertError = Java.use('javax.net.ssl.SSLPeerUnverifiedException');
-            UnverifiedCertError.$init.implementation = function (str) {
-                console.log('  --> Unexpected SSL verification failure, adding dynamic patch...');
+    // Build a custom TrustManagerFactory with a KeyStore that trusts only this certificate:
 
-                try {
-                    const stackTrace = Java.use('java.lang.Thread').currentThread().getStackTrace();
-                    const exceptionStackIndex = stackTrace.findIndex(stack =>
-                        stack.getClassName() === "javax.net.ssl.SSLPeerUnverifiedException"
-                    );
-                    const callingFunctionStack = stackTrace[exceptionStackIndex + 1];
+    const KeyStore = Java.use("java.security.KeyStore");
+    const keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    keyStore.load(null);
+    keyStore.setCertificateEntry("ca", trustedCACert);
 
-                    const className = callingFunctionStack.getClassName();
-                    const methodName = callingFunctionStack.getMethodName();
+    const TrustManagerFactory = Java.use("javax.net.ssl.TrustManagerFactory");
+    const customTrustManagerFactory = TrustManagerFactory.getInstance(
+        TrustManagerFactory.getDefaultAlgorithm()
+    );
+    customTrustManagerFactory.init(keyStore);
 
-                    console.log(`      Thrown by ${className}->${methodName}`);
+    return customTrustManagerFactory;
+}
 
-                    const callingClass = Java.use(className);
-                    const callingMethod = callingClass[methodName];
+function getCustomX509TrustManager() {
+    const customTrustManagerFactory = getCustomTrustManagerFactory();
+    const trustManagers = customTrustManagerFactory.getTrustManagers();
 
-                    if (callingMethod.implementation) return; // Already patched by Frida - skip it
+    const X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
 
-                    console.log('      Attempting to patch automatically...');
-                    const returnTypeName = callingMethod.returnType.type;
-
-                    callingMethod.implementation = function () {
-                        console.log(`  --> Bypassing ${className}->${methodName} (automatic exception patch)`);
-
-                        // This is not a perfect fix! Most unknown cases like this are really just
-                        // checkCert(cert) methods though, so doing nothing is perfect, and if we
-                        // do need an actual return value then this is probably the best we can do,
-                        // and at least we're logging the method name so you can patch it manually:
-
-                        if (returnTypeName === 'void') {
-                            return;
-                        } else {
-                            return null;
-                        }
-                    };
-
-                    console.log(`      [+] ${className}->${methodName} (automatic exception patch)`);
-                } catch (e) {
-                    console.log('      [ ] Failed to automatically patch failure');
-                }
-
-                return this.$init(str);
-            };
-            console.log('[+] SSLPeerUnverifiedException auto-patcher');
-        } catch (err) {
-            console.log('[ ] SSLPeerUnverifiedException auto-patcher');
-        }
-
-        /// -- Specific targeted hooks: -- ///
-
-        // HttpsURLConnection
-        try {
-            const HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
-            HttpsURLConnection.setDefaultHostnameVerifier.implementation = function (hostnameVerifier) {
-                console.log('  --> Bypassing HttpsURLConnection (setDefaultHostnameVerifier)');
-                return; // Do nothing, i.e. don't change the hostname verifier
-            };
-            console.log('[+] HttpsURLConnection (setDefaultHostnameVerifier)');
-        } catch (err) {
-            console.log('[ ] HttpsURLConnection (setDefaultHostnameVerifier)');
-        }
-        try {
-            const HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
-            HttpsURLConnection.setSSLSocketFactory.implementation = function (SSLSocketFactory) {
-                console.log('  --> Bypassing HttpsURLConnection (setSSLSocketFactory)');
-                return; // Do nothing, i.e. don't change the SSL socket factory
-            };
-            console.log('[+] HttpsURLConnection (setSSLSocketFactory)');
-        } catch (err) {
-            console.log('[ ] HttpsURLConnection (setSSLSocketFactory)');
-        }
-        try {
-            const HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
-            HttpsURLConnection.setHostnameVerifier.implementation = function (hostnameVerifier) {
-                console.log('  --> Bypassing HttpsURLConnection (setHostnameVerifier)');
-                return; // Do nothing, i.e. don't change the hostname verifier
-            };
-            console.log('[+] HttpsURLConnection (setHostnameVerifier)');
-        } catch (err) {
-            console.log('[ ] HttpsURLConnection (setHostnameVerifier)');
-        }
-
-        // SSLContext
-        try {
-            const X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
-            const SSLContext = Java.use('javax.net.ssl.SSLContext');
-
-            const TrustManager = Java.registerClass({
-                // Implement a custom TrustManager
-                name: 'dev.asd.test.TrustManager',
-                implements: [X509TrustManager],
-                methods: {
-                    checkClientTrusted: function (chain, authType) { },
-                    checkServerTrusted: function (chain, authType) { },
-                    getAcceptedIssuers: function () { return []; }
-                }
-            });
-
-            // Prepare the TrustManager array to pass to SSLContext.init()
-            const TrustManagers = [TrustManager.$new()];
-
-            // Get a handle on the init() on the SSLContext class
-            const SSLContext_init = SSLContext.init.overload(
-                '[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom'
-            );
-
-            // Override the init method, specifying the custom TrustManager
-            SSLContext_init.implementation = function (keyManager, trustManager, secureRandom) {
-                console.log('  --> Bypassing Trustmanager (Android < 7) request');
-                SSLContext_init.call(this, keyManager, TrustManagers, secureRandom);
-            };
-            console.log('[+] SSLContext');
-        } catch (err) {
-            console.log('[ ] SSLContext');
-        }
-
-        // TrustManagerImpl (Android > 7)
-        try {
-            const array_list = Java.use("java.util.ArrayList");
-            const TrustManagerImpl = Java.use('com.android.org.conscrypt.TrustManagerImpl');
-
-            // This step is notably what defeats the most common case: network security config
-            TrustManagerImpl.checkTrustedRecursive.implementation = function(a1, a2, a3, a4, a5, a6) {
-                console.log('  --> Bypassing TrustManagerImpl checkTrusted ');
-                return array_list.$new();
-            }
-
-            TrustManagerImpl.verifyChain.implementation = function (untrustedChain, trustAnchorChain, host, clientAuth, ocspData, tlsSctData) {
-                console.log('  --> Bypassing TrustManagerImpl verifyChain: ' + host);
-                return untrustedChain;
-            };
-            console.log('[+] TrustManagerImpl');
-        } catch (err) {
-            console.log('[ ] TrustManagerImpl');
-        }
-
-        // OkHTTPv3 (quadruple bypass)
-        try {
-            // Bypass OkHTTPv3 {1}
-            const okhttp3_Activity_1 = Java.use('okhttp3.CertificatePinner');
-            okhttp3_Activity_1.check.overload('java.lang.String', 'java.util.List').implementation = function (a, b) {
-                console.log('  --> Bypassing OkHTTPv3 (list): ' + a);
-                return;
-            };
-            console.log('[+] OkHTTPv3 (list)');
-        } catch (err) {
-            console.log('[ ] OkHTTPv3 (list)');
-        }
-        try {
-            // Bypass OkHTTPv3 {2}
-            // This method of CertificatePinner.check could be found in some old Android app
-            const okhttp3_Activity_2 = Java.use('okhttp3.CertificatePinner');
-            okhttp3_Activity_2.check.overload('java.lang.String', 'java.security.cert.Certificate').implementation = function (a, b) {
-                console.log('  --> Bypassing OkHTTPv3 (cert): ' + a);
-                return;
-            };
-            console.log('[+] OkHTTPv3 (cert)');
-        } catch (err) {
-            console.log('[ ] OkHTTPv3 (cert)');
-        }
-        try {
-            // Bypass OkHTTPv3 {3}
-            const okhttp3_Activity_3 = Java.use('okhttp3.CertificatePinner');
-            okhttp3_Activity_3.check.overload('java.lang.String', '[Ljava.security.cert.Certificate;').implementation = function (a, b) {
-                console.log('  --> Bypassing OkHTTPv3 (cert array): ' + a);
-                return;
-            };
-            console.log('[+] OkHTTPv3 (cert array)');
-        } catch (err) {
-            console.log('[ ] OkHTTPv3 (cert array)');
-        }
-        try {
-            // Bypass OkHTTPv3 {4}
-            const okhttp3_Activity_4 = Java.use('okhttp3.CertificatePinner');
-            okhttp3_Activity_4['check$okhttp'].implementation = function (a, b) {
-                console.log('  --> Bypassing OkHTTPv3 ($okhttp): ' + a);
-                return;
-            };
-            console.log('[+] OkHTTPv3 ($okhttp)');
-        } catch (err) {
-            console.log('[ ] OkHTTPv3 ($okhttp)');
-        }
-
-        // Trustkit (triple bypass)
-        try {
-            // Bypass Trustkit {1}
-            const trustkit_Activity_1 = Java.use('com.datatheorem.android.trustkit.pinning.OkHostnameVerifier');
-            trustkit_Activity_1.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function (a, b) {
-                console.log('  --> Bypassing Trustkit OkHostnameVerifier(SSLSession): ' + a);
-                return true;
-            };
-            console.log('[+] Trustkit OkHostnameVerifier(SSLSession)');
-        } catch (err) {
-            console.log('[ ] Trustkit OkHostnameVerifier(SSLSession)');
-        }
-        try {
-            // Bypass Trustkit {2}
-            const trustkit_Activity_2 = Java.use('com.datatheorem.android.trustkit.pinning.OkHostnameVerifier');
-            trustkit_Activity_2.verify.overload('java.lang.String', 'java.security.cert.X509Certificate').implementation = function (a, b) {
-                console.log('  --> Bypassing Trustkit OkHostnameVerifier(cert): ' + a);
-                return true;
-            };
-            console.log('[+] Trustkit OkHostnameVerifier(cert)');
-        } catch (err) {
-            console.log('[ ] Trustkit OkHostnameVerifier(cert)');
-        }
-        try {
-            // Bypass Trustkit {3}
-            const trustkit_PinningTrustManager = Java.use('com.datatheorem.android.trustkit.pinning.PinningTrustManager');
-            trustkit_PinningTrustManager.checkServerTrusted.implementation = function () {
-                console.log('  --> Bypassing Trustkit PinningTrustManager');
-            };
-            console.log('[+] Trustkit PinningTrustManager');
-        } catch (err) {
-            console.log('[ ] Trustkit PinningTrustManager');
-        }
-
-        // Appcelerator Titanium
-        try {
-            const appcelerator_PinningTrustManager = Java.use('appcelerator.https.PinningTrustManager');
-            appcelerator_PinningTrustManager.checkServerTrusted.implementation = function () {
-                console.log('  --> Bypassing Appcelerator PinningTrustManager');
-            };
-            console.log('[+] Appcelerator PinningTrustManager');
-        } catch (err) {
-            console.log('[ ] Appcelerator PinningTrustManager');
-        }
-
-        // OpenSSLSocketImpl Conscrypt
-        try {
-            const OpenSSLSocketImpl = Java.use('com.android.org.conscrypt.OpenSSLSocketImpl');
-            OpenSSLSocketImpl.verifyCertificateChain.implementation = function (certRefs, JavaObject, authMethod) {
-                console.log('  --> Bypassing OpenSSLSocketImpl Conscrypt');
-            };
-            console.log('[+] OpenSSLSocketImpl Conscrypt');
-        } catch (err) {
-            console.log('[ ] OpenSSLSocketImpl Conscrypt');
-        }
-
-        // OpenSSLEngineSocketImpl Conscrypt
-        try {
-            const OpenSSLEngineSocketImpl_Activity = Java.use('com.android.org.conscrypt.OpenSSLEngineSocketImpl');
-            OpenSSLEngineSocketImpl_Activity.verifyCertificateChain.overload('[Ljava.lang.Long;', 'java.lang.String').implementation = function (a, b) {
-                console.log('  --> Bypassing OpenSSLEngineSocketImpl Conscrypt: ' + b);
-            };
-            console.log('[+] OpenSSLEngineSocketImpl Conscrypt');
-        } catch (err) {
-            console.log('[ ] OpenSSLEngineSocketImpl Conscrypt');
-        }
-
-        // OpenSSLSocketImpl Apache Harmony
-        try {
-            const OpenSSLSocketImpl_Harmony = Java.use('org.apache.harmony.xnet.provider.jsse.OpenSSLSocketImpl');
-            OpenSSLSocketImpl_Harmony.verifyCertificateChain.implementation = function (asn1DerEncodedCertificateChain, authMethod) {
-                console.log('  --> Bypassing OpenSSLSocketImpl Apache Harmony');
-            };
-            console.log('[+] OpenSSLSocketImpl Apache Harmony');
-        } catch (err) {
-            console.log('[ ] OpenSSLSocketImpl Apache Harmony');
-        }
-
-        // PhoneGap sslCertificateChecker (https://github.com/EddyVerbruggen/SSLCertificateChecker-PhoneGap-Plugin)
-        try {
-            const phonegap_Activity = Java.use('nl.xservices.plugins.sslCertificateChecker');
-            phonegap_Activity.execute.overload('java.lang.String', 'org.json.JSONArray', 'org.apache.cordova.CallbackContext').implementation = function (a, b, c) {
-                console.log('  --> Bypassing PhoneGap sslCertificateChecker: ' + a);
-                return true;
-            };
-            console.log('[+] PhoneGap sslCertificateChecker');
-        } catch (err) {
-            console.log('[ ] PhoneGap sslCertificateChecker');
-        }
-
-        // IBM MobileFirst pinTrustedCertificatePublicKey (double bypass)
-        try {
-            // Bypass IBM MobileFirst {1}
-            const WLClient_Activity_1 = Java.use('com.worklight.wlclient.api.WLClient');
-            WLClient_Activity_1.getInstance().pinTrustedCertificatePublicKey.overload('java.lang.String').implementation = function (cert) {
-                console.log('  --> Bypassing IBM MobileFirst pinTrustedCertificatePublicKey (string): ' + cert);
-                return;
-            };
-            console.log('[+] IBM MobileFirst pinTrustedCertificatePublicKey (string)');
-        } catch (err) {
-            console.log('[ ] IBM MobileFirst pinTrustedCertificatePublicKey (string)');
-        }
-        try {
-            // Bypass IBM MobileFirst {2}
-            const WLClient_Activity_2 = Java.use('com.worklight.wlclient.api.WLClient');
-            WLClient_Activity_2.getInstance().pinTrustedCertificatePublicKey.overload('[Ljava.lang.String;').implementation = function (cert) {
-                console.log('  --> Bypassing IBM MobileFirst pinTrustedCertificatePublicKey (string array): ' + cert);
-                return;
-            };
-            console.log('[+] IBM MobileFirst pinTrustedCertificatePublicKey (string array)');
-        } catch (err) {
-            console.log('[ ] IBM MobileFirst pinTrustedCertificatePublicKey (string array)');
-        }
-
-        // IBM WorkLight (ancestor of MobileFirst) HostNameVerifierWithCertificatePinning (quadruple bypass)
-        try {
-            // Bypass IBM WorkLight {1}
-            const worklight_Activity_1 = Java.use('com.worklight.wlclient.certificatepinning.HostNameVerifierWithCertificatePinning');
-            worklight_Activity_1.verify.overload('java.lang.String', 'javax.net.ssl.SSLSocket').implementation = function (a, b) {
-                console.log('  --> Bypassing IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSocket): ' + a);
-                return;
-            };
-            console.log('[+] IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSocket)');
-        } catch (err) {
-            console.log('[ ] IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSocket)');
-        }
-        try {
-            // Bypass IBM WorkLight {2}
-            const worklight_Activity_2 = Java.use('com.worklight.wlclient.certificatepinning.HostNameVerifierWithCertificatePinning');
-            worklight_Activity_2.verify.overload('java.lang.String', 'java.security.cert.X509Certificate').implementation = function (a, b) {
-                console.log('  --> Bypassing IBM WorkLight HostNameVerifierWithCertificatePinning (cert): ' + a);
-                return;
-            };
-            console.log('[+] IBM WorkLight HostNameVerifierWithCertificatePinning (cert)');
-        } catch (err) {
-            console.log('[ ] IBM WorkLight HostNameVerifierWithCertificatePinning (cert)');
-        }
-        try {
-            // Bypass IBM WorkLight {3}
-            const worklight_Activity_3 = Java.use('com.worklight.wlclient.certificatepinning.HostNameVerifierWithCertificatePinning');
-            worklight_Activity_3.verify.overload('java.lang.String', '[Ljava.lang.String;', '[Ljava.lang.String;').implementation = function (a, b) {
-                console.log('  --> Bypassing IBM WorkLight HostNameVerifierWithCertificatePinning (string string): ' + a);
-                return;
-            };
-            console.log('[+] IBM WorkLight HostNameVerifierWithCertificatePinning (string string)');
-        } catch (err) {
-            console.log('[ ] IBM WorkLight HostNameVerifierWithCertificatePinning (string string)');
-        }
-        try {
-            // Bypass IBM WorkLight {4}
-            const worklight_Activity_4 = Java.use('com.worklight.wlclient.certificatepinning.HostNameVerifierWithCertificatePinning');
-            worklight_Activity_4.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function (a, b) {
-                console.log('  --> Bypassing IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSession): ' + a);
-                return true;
-            };
-            console.log('[+] IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSession)');
-        } catch (err) {
-            console.log('[ ] IBM WorkLight HostNameVerifierWithCertificatePinning (SSLSession)');
-        }
-
-        // Conscrypt CertPinManager
-        try {
-            const conscrypt_CertPinManager_Activity = Java.use('com.android.org.conscrypt.CertPinManager');
-            conscrypt_CertPinManager_Activity.isChainValid.overload('java.lang.String', 'java.util.List').implementation = function (a, b) {
-                console.log('  --> Bypassing Conscrypt CertPinManager: ' + a);
-                return true;
-            };
-            console.log('[+] Conscrypt CertPinManager');
-        } catch (err) {
-            console.log('[ ] Conscrypt CertPinManager');
-        }
-
-        // CWAC-Netsecurity (unofficial back-port pinner for Android<4.2) CertPinManager
-        try {
-            const cwac_CertPinManager_Activity = Java.use('com.commonsware.cwac.netsecurity.conscrypt.CertPinManager');
-            cwac_CertPinManager_Activity.isChainValid.overload('java.lang.String', 'java.util.List').implementation = function (a, b) {
-                console.log('  --> Bypassing CWAC-Netsecurity CertPinManager: ' + a);
-                return true;
-            };
-            console.log('[+] CWAC-Netsecurity CertPinManager');
-        } catch (err) {
-            console.log('[ ] CWAC-Netsecurity CertPinManager');
-        }
-
-        // Worklight Androidgap WLCertificatePinningPlugin
-        try {
-            const androidgap_WLCertificatePinningPlugin_Activity = Java.use('com.worklight.androidgap.plugin.WLCertificatePinningPlugin');
-            androidgap_WLCertificatePinningPlugin_Activity.execute.overload('java.lang.String', 'org.json.JSONArray', 'org.apache.cordova.CallbackContext').implementation = function (a, b, c) {
-                console.log('  --> Bypassing Worklight Androidgap WLCertificatePinningPlugin: ' + a);
-                return true;
-            };
-            console.log('[+] Worklight Androidgap WLCertificatePinningPlugin');
-        } catch (err) {
-            console.log('[ ] Worklight Androidgap WLCertificatePinningPlugin');
-        }
-
-        // Netty FingerprintTrustManagerFactory
-        try {
-            const netty_FingerprintTrustManagerFactory = Java.use('io.netty.handler.ssl.util.FingerprintTrustManagerFactory');
-            netty_FingerprintTrustManagerFactory.checkTrusted.implementation = function (type, chain) {
-                console.log('  --> Bypassing Netty FingerprintTrustManagerFactory');
-            };
-            console.log('[+] Netty FingerprintTrustManagerFactory');
-        } catch (err) {
-            console.log('[ ] Netty FingerprintTrustManagerFactory');
-        }
-
-        // Squareup CertificatePinner [OkHTTP<v3] (double bypass)
-        try {
-            // Bypass Squareup CertificatePinner {1}
-            const Squareup_CertificatePinner_Activity_1 = Java.use('com.squareup.okhttp.CertificatePinner');
-            Squareup_CertificatePinner_Activity_1.check.overload('java.lang.String', 'java.security.cert.Certificate').implementation = function (a, b) {
-                console.log('  --> Bypassing Squareup CertificatePinner (cert): ' + a);
-                return;
-            };
-            console.log('[+] Squareup CertificatePinner (cert)');
-        } catch (err) {
-            console.log('[ ] Squareup CertificatePinner (cert)');
-        }
-        try {
-            // Bypass Squareup CertificatePinner {2}
-            const Squareup_CertificatePinner_Activity_2 = Java.use('com.squareup.okhttp.CertificatePinner');
-            Squareup_CertificatePinner_Activity_2.check.overload('java.lang.String', 'java.util.List').implementation = function (a, b) {
-                console.log('  --> Bypassing Squareup CertificatePinner (list): ' + a);
-                return;
-            };
-            console.log('[+] Squareup CertificatePinner (list)');
-        } catch (err) {
-            console.log('[ ] Squareup CertificatePinner (list)');
-        }
-
-        // Squareup OkHostnameVerifier [OkHTTP v3] (double bypass)
-        try {
-            // Bypass Squareup OkHostnameVerifier {1}
-            const Squareup_OkHostnameVerifier_Activity_1 = Java.use('com.squareup.okhttp.internal.tls.OkHostnameVerifier');
-            Squareup_OkHostnameVerifier_Activity_1.verify.overload('java.lang.String', 'java.security.cert.X509Certificate').implementation = function (a, b) {
-                console.log('  --> Bypassing Squareup OkHostnameVerifier (cert): ' + a);
-                return true;
-            };
-            console.log('[+] Squareup OkHostnameVerifier (cert)');
-        } catch (err) {
-            console.log('[ ] Squareup OkHostnameVerifier (cert)');
-        }
-        try {
-            // Bypass Squareup OkHostnameVerifier {2}
-            const Squareup_OkHostnameVerifier_Activity_2 = Java.use('com.squareup.okhttp.internal.tls.OkHostnameVerifier');
-            Squareup_OkHostnameVerifier_Activity_2.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function (a, b) {
-                console.log('  --> Bypassing Squareup OkHostnameVerifier (SSLSession): ' + a);
-                return true;
-            };
-            console.log('[+] Squareup OkHostnameVerifier (SSLSession)');
-        } catch (err) {
-            console.log('[ ] Squareup OkHostnameVerifier (SSLSession)');
-        }
-
-        // Android WebViewClient (double bypass)
-        try {
-            // Bypass WebViewClient {1} (deprecated from Android 6)
-            const AndroidWebViewClient_Activity_1 = Java.use('android.webkit.WebViewClient');
-            AndroidWebViewClient_Activity_1.onReceivedSslError.overload('android.webkit.WebView', 'android.webkit.SslErrorHandler', 'android.net.http.SslError').implementation = function (obj1, obj2, obj3) {
-                console.log('  --> Bypassing Android WebViewClient (SslErrorHandler)');
-            };
-            console.log('[+] Android WebViewClient (SslErrorHandler)');
-        } catch (err) {
-            console.log('[ ] Android WebViewClient (SslErrorHandler)');
-        }
-        try {
-            // Bypass WebViewClient {2}
-            const AndroidWebViewClient_Activity_2 = Java.use('android.webkit.WebViewClient');
-            AndroidWebViewClient_Activity_2.onReceivedSslError.overload('android.webkit.WebView', 'android.webkit.WebResourceRequest', 'android.webkit.WebResourceError').implementation = function (obj1, obj2, obj3) {
-                console.log('  --> Bypassing Android WebViewClient (WebResourceError)');
-            };
-            console.log('[+] Android WebViewClient (WebResourceError)');
-        } catch (err) {
-            console.log('[ ] Android WebViewClient (WebResourceError)');
-        }
-
-        // Apache Cordova WebViewClient
-        try {
-            const CordovaWebViewClient_Activity = Java.use('org.apache.cordova.CordovaWebViewClient');
-            CordovaWebViewClient_Activity.onReceivedSslError.overload('android.webkit.WebView', 'android.webkit.SslErrorHandler', 'android.net.http.SslError').implementation = function (obj1, obj2, obj3) {
-                console.log('  --> Bypassing Apache Cordova WebViewClient');
-                obj3.proceed();
-            };
-        } catch (err) {
-            console.log('[ ] Apache Cordova WebViewClient');
-        }
-
-        // Boye AbstractVerifier
-        try {
-            const boye_AbstractVerifier = Java.use('ch.boye.httpclientandroidlib.conn.ssl.AbstractVerifier');
-            boye_AbstractVerifier.verify.implementation = function (host, ssl) {
-                console.log('  --> Bypassing Boye AbstractVerifier: ' + host);
-            };
-        } catch (err) {
-            console.log('[ ] Boye AbstractVerifier');
-        }
-
-		// Appmattus
-		try {
-            const appmatus_Activity = Java.use('com.appmattus.certificatetransparency.internal.verifier.CertificateTransparencyInterceptor');
-            appmatus_Activity['intercept'].implementation = function (a) {
-                console.log('  --> Bypassing Appmattus (Transparency)');
-                return a.proceed(a.request());
-            };
-            console.log('[+] Appmattus (CertificateTransparencyInterceptor)');
-        } catch (err) {
-            console.log('[ ] Appmattus (CertificateTransparencyInterceptor)');
-        }
-
-        try {
-            const CertificateTransparencyTrustManager = Java.use(
-                'com.appmattus.certificatetransparency.internal.verifier.CertificateTransparencyTrustManager'
-            );
-            CertificateTransparencyTrustManager['checkServerTrusted'].overload(
-                '[Ljava.security.cert.X509Certificate;',
-                'java.lang.String'
-            ).implementation = function (x509CertificateArr, str) {
-                console.log('  --> Bypassing Appmattus (CertificateTransparencyTrustManager)');
-            };
-            CertificateTransparencyTrustManager['checkServerTrusted'].overload(
-                '[Ljava.security.cert.X509Certificate;',
-                'java.lang.String',
-                'java.lang.String'
-            ).implementation = function (x509CertificateArr, str, str2) {
-                console.log('  --> Bypassing Appmattus (CertificateTransparencyTrustManager)');
-                return Java.use('java.util.ArrayList').$new();
-            };
-            console.log('[+] Appmattus (CertificateTransparencyTrustManager)');
-        } catch (err) {
-            console.log('[ ] Appmattus (CertificateTransparencyTrustManager)');
-        }
-
-        console.log("Unpinning setup completed");
-        console.log("---");
+    const x509TrustManager = trustManagers.find((trustManager) => {
+        return trustManager.class.isAssignableFrom(X509TrustManager.class);
     });
 
-}, 0);
+    // We have to cast it explicitly before Frida will allow us to use the X509 methods:
+    return Java.cast(x509TrustManager, X509TrustManager);
+}
+
+// Some standard hook replacements for various cases:
+const NO_OP = () => {};
+const RETURN_TRUE = () => true;
+const CHECK_OUR_TRUST_MANAGER_ONLY = () => {
+    const trustManager = getCustomX509TrustManager();
+    return (certs, authType) => {
+        trustManager.checkServerTrusted(certs, authType);
+    };
+};
+
+const PINNING_FIXES = {
+    // --- Native HttpsURLConnection
+
+    'javax.net.ssl.HttpsURLConnection': [
+        {
+            methodName: 'setDefaultHostnameVerifier',
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'setSSLSocketFactory',
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'setHostnameVerifier',
+            replacement: () => NO_OP
+        },
+    ],
+
+    // --- Native SSLContext
+
+    'javax.net.ssl.SSLContext': [
+        {
+            methodName: 'init',
+            overload: ['[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom'],
+            replacement: (targetMethod) => {
+                const customTrustManagerFactory = getCustomTrustManagerFactory();
+
+                // When constructor is called, replace the trust managers argument:
+                return function (keyManager, _providedTrustManagers, secureRandom) {
+                    return targetMethod.call(this,
+                        keyManager,
+                        customTrustManagerFactory.getTrustManagers(), // Override their trust managers
+                        secureRandom
+                    );
+                }
+            }
+        }
+    ],
+
+    // --- Native Conscrypt CertPinManager
+
+    'com.android.org.conscrypt.CertPinManager': [
+        {
+            methodName: 'isChainValid',
+            replacement: () => RETURN_TRUE
+        },
+        {
+            methodName: 'checkChainPinning',
+            replacement: () => NO_OP
+        }
+    ],
+
+    // --- Native pinning configuration loading (used for configuration by many libraries)
+
+    'android.security.net.config.NetworkSecurityConfig': [
+        {
+            methodName: '$init',
+            overload: '*',
+            replacement: (targetMethod) => {
+                const PinSet = Java.use('android.security.net.config.PinSet');
+                const EMPTY_PINSET = PinSet.EMPTY_PINSET.value;
+                return function () {
+                    // Always ignore the 2nd 'pins' PinSet argument entirely:
+                    arguments[2] = EMPTY_PINSET;
+                    targetMethod.call(this, ...arguments);
+                }
+            }
+        }
+    ],
+
+    // --- Native HostnameVerification override (n.b. Android contains its own vendored OkHttp v2!)
+
+    'com.android.okhttp.internal.tls.OkHostnameVerifier': [
+        {
+            methodName: 'verify',
+            overload: [
+                'java.lang.String',
+                'javax.net.ssl.SSLSession'
+            ],
+            replacement: (targetMethod) => {
+                // Our trust manager - this trusts *only* our extra CA
+                const trustManager = getCustomX509TrustManager();
+
+                return function (hostname, sslSession) {
+                    try {
+                        const certs = sslSession.getPeerCertificates();
+
+                        // https://stackoverflow.com/a/70469741/68051
+                        const authType = "RSA";
+
+                        // This throws if the certificate isn't trusted (i.e. if it's
+                        // not signed by our extra CA specifically):
+                        trustManager.checkServerTrusted(certs, authType);
+
+                        // If the cert is from our CA, great! Skip hostname checks entirely.
+                        return true;
+                    } catch (e) {} // Ignore errors and fallback to default behaviour
+
+                    // We fallback to ensure that connections with other CAs (e.g. direct
+                    // connections allowed past the proxy) validate as normal.
+                    return targetMethod.call(this, ...arguments);
+                }
+            }
+        }
+    ],
+
+    'com.android.okhttp.Address': [
+        {
+            methodName: '$init',
+            overload: [
+                'java.lang.String',
+                'int',
+                'com.android.okhttp.Dns',
+                'javax.net.SocketFactory',
+                'javax.net.ssl.SSLSocketFactory',
+                'javax.net.ssl.HostnameVerifier',
+                'com.android.okhttp.CertificatePinner',
+                'com.android.okhttp.Authenticator',
+                'java.net.Proxy',
+                'java.util.List',
+                'java.util.List',
+                'java.net.ProxySelector'
+            ],
+            replacement: (targetMethod) => {
+                const defaultHostnameVerifier = Java.use("com.android.okhttp.internal.tls.OkHostnameVerifier")
+                    .INSTANCE.value;
+                const defaultCertPinner = Java.use("com.android.okhttp.CertificatePinner")
+                    .DEFAULT.value;
+
+                return function () {
+                    // Override arguments, to swap any custom check params (widely used
+                    // to add stricter rules to TLS verification) with the defaults instead:
+                    arguments[5] = defaultHostnameVerifier;
+                    arguments[6] = defaultCertPinner;
+
+                    targetMethod.call(this, ...arguments);
+                }
+            }
+        },
+        // Almost identical patch, but for Nougat and older. In these versions, the DNS argument
+        // isn't passed here, so the arguments to patch changes slightly:
+        {
+            methodName: '$init',
+            overload: [
+                'java.lang.String',
+                'int',
+                // No DNS param
+                'javax.net.SocketFactory',
+                'javax.net.ssl.SSLSocketFactory',
+                'javax.net.ssl.HostnameVerifier',
+                'com.android.okhttp.CertificatePinner',
+                'com.android.okhttp.Authenticator',
+                'java.net.Proxy',
+                'java.util.List',
+                'java.util.List',
+                'java.net.ProxySelector'
+            ],
+            replacement: (targetMethod) => {
+                const defaultHostnameVerifier = Java.use("com.android.okhttp.internal.tls.OkHostnameVerifier")
+                    .INSTANCE.value;
+                const defaultCertPinner = Java.use("com.android.okhttp.CertificatePinner")
+                    .DEFAULT.value;
+
+                return function () {
+                    // Override arguments, to swap any custom check params (widely used
+                    // to add stricter rules to TLS verification) with the defaults instead:
+                    arguments[4] = defaultHostnameVerifier;
+                    arguments[5] = defaultCertPinner;
+
+                    targetMethod.call(this, ...arguments);
+                }
+            }
+        }
+    ],
+
+    // --- OkHttp v3
+
+    'okhttp3.CertificatePinner': [
+        {
+            methodName: 'check',
+            overload: ['java.lang.String', 'java.util.List'],
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'check',
+            overload: ['java.lang.String', 'java.security.cert.Certificate'],
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'check',
+            overload: ['java.lang.String', '[Ljava.security.cert.Certificate;'],
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'check$okhttp',
+            replacement: () => NO_OP
+        },
+    ],
+
+    // --- SquareUp OkHttp (< v3)
+
+    'com.squareup.okhttp.CertificatePinner': [
+        {
+            methodName: 'check',
+            overload: ['java.lang.String', 'java.security.cert.Certificate'],
+            replacement: () => NO_OP
+        },
+        {
+            methodName: 'check',
+            overload: ['java.lang.String', 'java.util.List'],
+            replacement: () => NO_OP
+        }
+    ],
+
+    // --- Trustkit (https://github.com/datatheorem/TrustKit-Android/)
+
+    'com.datatheorem.android.trustkit.pinning.PinningTrustManager': [
+        {
+            methodName: 'checkServerTrusted',
+            replacement: CHECK_OUR_TRUST_MANAGER_ONLY
+        }
+    ],
+
+    // --- Appcelerator (https://github.com/tidev/appcelerator.https)
+
+    'appcelerator.https.PinningTrustManager': [
+        {
+            methodName: 'checkServerTrusted',
+            replacement: CHECK_OUR_TRUST_MANAGER_ONLY
+        }
+    ],
+
+    // --- PhoneGap sslCertificateChecker (https://github.com/EddyVerbruggen/SSLCertificateChecker-PhoneGap-Plugin)
+
+    'nl.xservices.plugins.sslCertificateChecker': [
+        {
+            methodName: 'execute',
+            overload: ['java.lang.String', 'org.json.JSONArray', 'org.apache.cordova.CallbackContext'],
+            replacement: () => (_action, _args, context) => {
+                context.success("CONNECTION_SECURE");
+                return true;
+            }
+            // This trusts _all_ certs, but that's fine - this is used for checks of independent test
+            // connections, rather than being a primary mechanism to secure the app's TLS connections.
+        }
+    ],
+
+    // --- IBM WorkLight
+
+    'com.worklight.wlclient.api.WLClient': [
+        {
+            methodName: 'pinTrustedCertificatePublicKey',
+            getMethod: (WLClientCls) => WLClientCls.getInstance().pinTrustedCertificatePublicKey,
+            overload: '*'
+        }
+    ],
+
+    'com.worklight.wlclient.certificatepinning.HostNameVerifierWithCertificatePinning': [
+        {
+            methodName: 'verify',
+            overload: '*',
+            replacement: () => NO_OP
+        }
+        // This covers at least 4 commonly used WorkLight patches. Oddly, most sets of hooks seem
+        // to return true for 1/4 cases, which must be wrong (overloads must all have the same
+        // return type) but also it's very hard to find any modern (since 2017) references to this
+        // class anywhere including WorkLight docs, so it may no longer be relevant anyway.
+    ],
+
+    'com.worklight.androidgap.plugin.WLCertificatePinningPlugin': [
+        {
+            methodName: 'execute',
+            overload: '*',
+            replacement: () => RETURN_TRUE
+        }
+    ],
+
+    // --- CWAC-Netsecurity (unofficial back-port pinner for Android<4.2) CertPinManager
+
+    'com.commonsware.cwac.netsecurity.conscrypt.CertPinManager': [
+        {
+            methodName: 'isChainValid',
+            overload: '*',
+            replacement: () => RETURN_TRUE
+        }
+    ],
+
+    // --- Netty
+
+    'io.netty.handler.ssl.util.FingerprintTrustManagerFactory': [
+        {
+            methodName: 'checkTrusted',
+            replacement: () => NO_OP
+        }
+    ],
+
+    // --- Cordova / PhoneGap Advanced HTTP Plugin (https://github.com/silkimen/cordova-plugin-advanced-http)
+
+    // Modern version:
+    'com.silkimen.cordovahttp.CordovaServerTrust': [
+        {
+            methodName: '$init',
+            replacement: (targetMethod) => function () {
+                // Ignore any attempts to set trust to 'pinned'. Default settings will trust
+                // our cert because of the separate system-certificate injection step.
+                if (arguments[0] === 'pinned') {
+                    arguments[0] = 'default';
+                }
+
+                return targetMethod.call(this, ...arguments);
+            }
+        }
+    ],
+
+    // --- Appmattus Cert Transparency (https://github.com/appmattus/certificatetransparency/)
+
+    'com.appmattus.certificatetransparency.internal.verifier.CertificateTransparencyHostnameVerifier': [
+        {
+            methodName: 'verify',
+            replacement: () => RETURN_TRUE
+            // This is not called unless the cert passes basic trust checks, so it's safe to blindly accept.
+        }
+    ],
+
+    'com.appmattus.certificatetransparency.internal.verifier.CertificateTransparencyInterceptor': [
+        {
+            methodName: 'intercept',
+            replacement: () => (a) => a.proceed(a.request())
+            // This is not called unless the cert passes basic trust checks, so it's safe to blindly accept.
+        }
+    ],
+
+    'com.appmattus.certificatetransparency.internal.verifier.CertificateTransparencyTrustManager': [
+        {
+            methodName: 'checkServerTrusted',
+            overload: ['[Ljava.security.cert.X509Certificate;', 'java.lang.String'],
+            replacement: CHECK_OUR_TRUST_MANAGER_ONLY,
+            methodName: 'checkServerTrusted',
+            overload: ['[Ljava.security.cert.X509Certificate;', 'java.lang.String', 'java.lang.String'],
+            replacement: () => {
+                const trustManager = getCustomX509TrustManager();
+                return (certs, authType, _hostname) => {
+                    // We ignore the hostname - if the certs are good (i.e they're ours), then the
+                    // whole chain is good to go.
+                    trustManager.checkServerTrusted(certs, authType);
+                    return Java.use('java.util.Arrays').asList(certs);
+                };
+            }
+        }
+    ]
+
+};
+
+const getJavaClassIfExists = (clsName) => {
+    try {
+        return Java.use(clsName);
+    } catch {
+        return undefined;
+    }
+}
+
+Java.perform(function () {
+    if (DEBUG_MODE) console.log('\n    === Disabling all recognized unpinning libraries ===');
+
+    const classesToPatch = Object.keys(PINNING_FIXES);
+
+    classesToPatch.forEach((targetClassName) => {
+        const TargetClass = getJavaClassIfExists(targetClassName);
+        if (!TargetClass) {
+            // We skip patches for any classes that don't seem to be present. This is common
+            // as not all libraries we handle are necessarily used.
+            if (DEBUG_MODE) console.log(`[ ] ${targetClassName} *`);
+            return;
+        }
+
+        const patches = PINNING_FIXES[targetClassName];
+
+        let patchApplied = false;
+
+        patches.forEach(({ methodName, getMethod, overload, replacement }) => {
+            const namedTargetMethod = getMethod
+                ? getMethod(TargetClass)
+                : TargetClass[methodName];
+
+            const methodDescription = `${methodName}${
+                overload === '*'
+                    ? '(*)'
+                : overload
+                    ? '(' + overload.map((argType) => {
+                        // Simplify arg names to just the class name for simpler logs:
+                        const argClassName = argType.split('.').slice(-1)[0];
+                        if (argType.startsWith('[L')) return `${argClassName}[]`;
+                        else return argClassName;
+                    }).join(', ') + ')'
+                // No overload:
+                    : ''
+            }`
+
+            let targetMethodImplementations = [];
+            try {
+                if (namedTargetMethod) {
+                    if (!overload) {
+                            // No overload specified
+                        targetMethodImplementations = [namedTargetMethod];
+                    } else if (overload === '*') {
+                        // Targetting _all_ overloads
+                        targetMethodImplementations = namedTargetMethod.overloads;
+                    } else {
+                        // Or targetting a specific overload:
+                        targetMethodImplementations = [namedTargetMethod.overload(...overload)];
+                    }
+                }
+            } catch (e) {
+                // Overload not present
+            }
+
+
+            // We skip patches for any methods that don't seem to be present. This is rarer, but does
+            // happen due to methods that only appear in certain library versions or whose signatures
+            // have changed over time.
+            if (targetMethodImplementations.length === 0) {
+                if (DEBUG_MODE) console.log(`[ ] ${targetClassName} ${methodDescription}`);
+                return;
+            }
+
+            targetMethodImplementations.forEach((targetMethod, i) => {
+                const patchName = `${targetClassName} ${methodDescription}${
+                    targetMethodImplementations.length > 1 ? ` (${i})` : ''
+                }`;
+
+                try {
+                    const newImplementation = replacement(targetMethod);
+                    if (DEBUG_MODE) {
+                        // Log each hooked method as it's called:
+                        targetMethod.implementation = function () {
+                            console.log(` => ${patchName}`);
+                            return newImplementation.apply(this, arguments);
+                        }
+                    } else {
+                        targetMethod.implementation = newImplementation;
+                    }
+
+                    if (DEBUG_MODE) console.log(`[+] ${patchName}`);
+                    patchApplied = true;
+                } catch (e) {
+                    // In theory, errors like this should never happen - it means the patch is broken
+                    // (e.g. some dynamic patch building fails completely)
+                    console.error(`[!] ERROR: ${patchName} failed: ${e}`);
+                }
+            })
+        });
+
+        if (!patchApplied) {
+            console.warn(`[!] Matched class ${targetClassName} but could not patch any methods`);
+        }
+    });
+
+    console.log('== Certificate unpinning completed ==');
+});
