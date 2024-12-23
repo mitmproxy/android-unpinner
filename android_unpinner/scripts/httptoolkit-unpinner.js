@@ -26,6 +26,8 @@
  *
  *************************************************************************************************/
 
+const DEBUG_MODE = false;
+
 function buildX509CertificateFromBytes(certBytes) {
     const ByteArrayInputStream = Java.use('java.io.ByteArrayInputStream');
     const CertFactory = Java.use('java.security.cert.CertificateFactory');
@@ -430,8 +432,26 @@ const PINNING_FIXES = {
                 };
             }
         }
+    ],
+    
+    'com.android.org.conscrypt.TrustManagerImpl': [
+        {
+            methodName: 'checkTrustedRecursive',
+            replacement: () => {
+                const arrayList = Java.use("java.util.ArrayList")
+                return function (
+                    certs,
+                    host,
+                    clientAuth,
+                    untrustedChain,
+                    trustAnchorChain,
+                    used
+                )  {
+                    return arrayList.$new();
+                }
+            }
+        }
     ]
-
 };
 
 const getJavaClassIfExists = (clsName) => {
