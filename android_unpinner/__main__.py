@@ -364,7 +364,7 @@ def get_apks(package: str, outdir: Path) -> None:
         raise RuntimeError(f"Unxepected output from pm path: {package_info!r}")
     apks = [p.removeprefix("package:") for p in package_info.splitlines()]
     if not outdir.exists():
-        Path.mkdir(outdir)
+        outdir.mkdir()
     for apk in apks:
         logging.info(f"Getting {apk}...")
         outfile = outdir / Path(apk).name
