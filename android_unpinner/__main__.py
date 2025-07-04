@@ -15,7 +15,7 @@ from .vendor import build_tools
 from .vendor import frida_tools
 from .vendor import gadget_config_file_listen, gadget_config_file_script_directory
 from .vendor import gadget_files
-from .vendor.platform_tools import adb
+from .vendor.platform_tools import adb, set_device
 
 here = Path(__file__).absolute().parent
 LIBGADGET = "libgadget.so"
@@ -35,13 +35,13 @@ def patch_apk_file(infile: Path, outfile: Path) -> None:
         ):
             outfile.unlink()
 
-    logging.info(f"Make APK debuggable...")
+    logging.info("Make APK debuggable...")
     frida_tools.apk.make_debuggable(
         str(infile),
         str(outfile),
     )
 
-    logging.info(f"Zipalign & re-sign APK...")
+    logging.info("Zipalign & re-sign APK...")
     build_tools.zipalign(outfile)
     build_tools.sign(outfile)
 
@@ -88,7 +88,7 @@ def install_apk(apk_files: list[Path]) -> None:
     if package_name in get_packages():
         if not force:
             click.confirm(
-                f"About to install patched APK. This removes the existing app with all its data. Continue?",
+                "About to install patched APK. This removes the existing app with all its data. Continue?",
                 abort=True,
             )
 
@@ -108,7 +108,7 @@ def copy_files() -> None:
     """
     # TODO: We could later provide the option to use a custom script dir.
     ensure_device_connected()
-    logging.info(f"Detect architecture...")
+    logging.info("Detect architecture...")
     abi = adb("shell getprop ro.product.cpu.abi").stdout.strip()
     if abi == "armeabi-v7a":
         abi = "arm"
@@ -117,13 +117,11 @@ def copy_files() -> None:
     adb(f"push {gadget_file} /data/local/tmp/{LIBGADGET}")
     adb(f"push {gadget_config_file} /data/local/tmp/{LIBGADGET_CONF}")
 
-    logging.info(
-        f"Copying builtin Frida scripts to /data/local/tmp/android-unpinner..."
-    )
+    logging.info("Copying builtin Frida scripts to /data/local/tmp/android-unpinner...")
     adb(f"push {here / 'scripts'}/. /data/local/tmp/android-unpinner/")
-    active_scripts = adb(
-        f"shell ls /data/local/tmp/android-unpinner"
-    ).stdout.splitlines(keepends=False)
+    active_scripts = adb("shell ls /data/local/tmp/android-unpinner").stdout.splitlines(
+        keepends=False
+    )
     logging.info(f"Active frida scripts: {active_scripts}")
 
 
@@ -131,7 +129,9 @@ def start_app_on_device(package_name: str) -> None:
     ensure_device_connected()
     logging.info("Start app (suspended)...")
     adb(f"shell am set-debug-app -w {package_name}")
-    activity = adb(f"shell cmd \"package resolve-activity --brief {package_name} | tail -n 1\"").stdout.strip()
+    activity = adb(
+        f'shell cmd "package resolve-activity --brief {package_name} | tail -n 1"'
+    ).stdout.strip()
     adb(f"shell am start -n {activity}")
 
     logging.info("Obtain process id...")
@@ -245,10 +245,25 @@ listen_option = click.option(
 )
 
 
+def _device(ctx, param, val):
+    if val:
+        set_device(val)
+
+
+device_option = click.option(
+    "-d",
+    "--device",
+    help="Device serial number to use when multiple devices are connected.",
+    callback=_device,
+    expose_value=False,
+)
+
+
 @cli.command("all")
 @verbosity_option
 @force_option
 @listen_option
+@device_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
@@ -278,6 +293,7 @@ def all_cmd(apk_files: list[Path]) -> None:
 @cli.command("install")
 @verbosity_option
 @force_option
+@device_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
@@ -313,6 +329,7 @@ def patch_apks(apks: list[Path]) -> None:
 @verbosity_option
 @force_option
 @listen_option
+@device_option
 def push_resources() -> None:
     """Copy Frida gadget and scripts to device."""
     copy_files()
@@ -322,6 +339,7 @@ def push_resources() -> None:
 @cli.command()
 @verbosity_option
 @force_option
+@device_option
 @click.argument("package-name")
 def start_app(package_name: str) -> None:
     """Start app on device and inject Frida gadget."""
@@ -331,10 +349,11 @@ def start_app(package_name: str) -> None:
 
 @cli.command()
 @verbosity_option
+@device_option
 def list_packages() -> None:
     """List all packages installed on the device."""
     ensure_device_connected()
-    logging.info(f"Enumerating packages...")
+    logging.info("Enumerating packages...")
     print("\n".join(get_packages()))
     logging.info("All done! 🎉")
 
@@ -349,6 +368,7 @@ def package_name(apk_file: Path) -> None:
 @cli.command()
 @verbosity_option
 @force_option
+@device_option
 @click.argument("package", type=str)
 @click.argument("outdir", type=click.Path(path_type=Path, file_okay=False))
 def get_apks(package: str, outdir: Path) -> None:
