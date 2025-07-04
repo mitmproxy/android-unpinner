@@ -29,3 +29,9 @@ def adb(cmd: str) -> subprocess.CompletedProcess[str]:
         raise
     logging.debug(f"cmd='{cmd}'\n" f"{proc.stdout=}\n" f"{proc.stderr=}")
     return proc
+
+
+def set_device(device_serial: str | None) -> None:
+    """Set the target device for all adb commands."""
+    global device
+    device = device_serial
