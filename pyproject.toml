@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling>=1.22"]
+build-backend = "hatchling.build"
+
+[project]
+name = "android-unpinner"
+dynamic = ["version"]
+description = "Android Certificate Pinning Unpinner"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Maximilian Hils", email = "android-unpinner@maximilianhils.com" },
+]
+
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Environment :: Console",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX",
+  "Operating System :: Microsoft :: Windows",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.10",
+  "Topic :: Security",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Internet :: Proxy Servers",
+  "Topic :: System :: Networking :: Monitoring",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
+
+dependencies = [
+  "rich_click",
+]
+
+[project.scripts]
+android-unpinner = "android_unpinner.__main__:cli"
+aup = "android_unpinner.__main__:cli"
+
+[project.urls]
+Homepage = "https://github.com/maximilianhils/httptoolkit-pinning-demo"
+Source = "https://github.com/maximilianhils/httptoolkit-pinning-demo"
+Documentation = "https://github.com/maximilianhils/httptoolkit-pinning-demo"
+Issues = "https://github.com/maximilianhils/httptoolkit-pinning-demo/issues"
+
+[tool.hatch.version]
+source = "code"
+path = "android_unpinner/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "android_unpinner/vendor/build_tools/**",
+  "android_unpinner/vendor/platform_tools/**",
+  "android_unpinner/vendor/frida/**",
+  "httptoolkit-pinning-demo.apk",
+]
