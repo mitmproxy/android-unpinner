@@ -20,6 +20,13 @@ $ cd android-unpinner
 $ pip install -e .
 ```
 
+## Install as tool with uv (recommended)
+```console
+git clone https://github.com/maximilianhils/httptoolkit-pinning-demo.git
+cd httptoolkit-pinning-demo
+uv tool install ./
+```
+
 ## Usage
 
 Connect your device via USB and run the following command.
