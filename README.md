@@ -21,11 +21,13 @@ $ pip install -e .
 ```
 
 ## Install as tool with uv (recommended)
+
 ```console
-git clone https://github.com/maximilianhils/httptoolkit-pinning-demo.git
-cd httptoolkit-pinning-demo
-uv tool install ./
+$ git clone https://github.com/mitmproxy/android-unpinner.git
+$ cd android-unpinner
+$ uv tool install ./
 ```
+
 
 ## Usage
 
