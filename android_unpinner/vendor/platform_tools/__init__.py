@@ -16,18 +16,19 @@ else:
 
 def adb(cmd: str) -> subprocess.CompletedProcess[str]:
     """Helper function to call adb and capture stdout."""
-    cmd = f"{adb_binary} {cmd}"
+    base = f"{adb_binary}"
     if device:
-        cmd += f" -s {device}"
+        base += f" -s {device}"
         logging.debug(f"Using device: {device}")
+    full_cmd = f"{base} {cmd}"
     try:
         proc = subprocess.run(
-            cmd, shell=True, check=True, capture_output=True, text=True
+            full_cmd, shell=False, check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:
-        logging.debug(f"cmd='{cmd}'\n" f"{e.stdout=}\n" f"{e.stderr=}")
+        logging.debug(f"cmd='{full_cmd}'\n" f"{e.stdout=}\n" f"{e.stderr=}")
         raise
-    logging.debug(f"cmd='{cmd}'\n" f"{proc.stdout=}\n" f"{proc.stderr=}")
+    logging.debug(f"cmd='{full_cmd}'\n" f"{proc.stdout=}\n" f"{proc.stderr=}")
     return proc
 
 
