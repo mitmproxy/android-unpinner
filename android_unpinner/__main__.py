@@ -72,7 +72,7 @@ def patch_apk_files(apks: list[Path]) -> list[Path]:
 
 def ensure_device_connected() -> None:
     try:
-        adb("get-state")
+        adb(["get-state"])
     except subprocess.CalledProcessError:
         raise RuntimeError("No device connected via ADB.")
 
@@ -93,13 +93,13 @@ def install_apk(apk_files: list[Path]) -> None:
             )
 
         logging.info("Uninstall existing app...")
-        adb(f"uninstall {package_name}")
+        adb(["uninstall", package_name])
 
     logging.info(f"Installing {package_name}...")
     if len(apk_files) > 1:
-        adb(f"install-multiple --no-incremental {' '.join(str(x) for x in apk_files)}")
+        adb(["install-multiple", "--no-incremental", *[str(x) for x in apk_files]])
     else:
-        adb(f"install --no-incremental {apk_files[0]}")
+        adb(["install", "--no-incremental", str(apk_files[0])])
 
 
 def copy_files() -> None:
@@ -109,17 +109,17 @@ def copy_files() -> None:
     # TODO: We could later provide the option to use a custom script dir.
     ensure_device_connected()
     logging.info("Detect architecture...")
-    abi = adb("shell getprop ro.product.cpu.abi").stdout.strip()
+    abi = adb(["shell", "getprop", "ro.product.cpu.abi"]).stdout.strip()
     if abi == "armeabi-v7a":
         abi = "arm"
     gadget_file = gadget_files.get(abi, gadget_files["arm64"])
     logging.info(f"Copying matching gadget: {gadget_file.name}...")
-    adb(f"push {gadget_file} /data/local/tmp/{LIBGADGET}")
-    adb(f"push {gadget_config_file} /data/local/tmp/{LIBGADGET_CONF}")
+    adb(["push", str(gadget_file), f"/data/local/tmp/{LIBGADGET}"])
+    adb(["push", str(gadget_config_file), f"/data/local/tmp/{LIBGADGET_CONF}"])
 
     logging.info("Copying builtin Frida scripts to /data/local/tmp/android-unpinner...")
-    adb(f"push {here / 'scripts'}/. /data/local/tmp/android-unpinner/")
-    active_scripts = adb("shell ls /data/local/tmp/android-unpinner").stdout.splitlines(
+    adb(["push", f"{here / 'scripts'}/.", "/data/local/tmp/android-unpinner/"])
+    active_scripts = adb(["shell", "ls", "/data/local/tmp/android-unpinner"]).stdout.splitlines(
         keepends=False
     )
     logging.info(f"Active frida scripts: {active_scripts}")
@@ -128,17 +128,21 @@ def copy_files() -> None:
 def start_app_on_device(package_name: str) -> None:
     ensure_device_connected()
     logging.info("Start app (suspended)...")
-    adb(f"shell am set-debug-app -w {package_name}")
-    activity = adb(
-        f'shell cmd "package resolve-activity --brief {package_name} | tail -n 1"'
-    ).stdout.strip()
-    adb(f"shell am start -n {activity}")
+    adb(["shell", "am", "set-debug-app", "-w", package_name])
+    activity_lines = adb([
+        "shell", "cmd", "package", "resolve-activity",
+        "--brief", package_name
+    ]).stdout.strip().splitlines()
+    activity = activity_lines[-1] if activity_lines else ""
+    if not activity or activity.lower().startswith("no activity found"):
+        raise RuntimeError("Activity not found")
+    adb(["shell", "am", "start", "-n", activity])
 
     logging.info("Obtain process id...")
     pid = None
     for i in range(5):
         try:
-            pid = adb(f"shell pidof {package_name}").stdout.strip()
+            pid = adb(["shell", "pidof", package_name]).stdout.strip()
             break
         except subprocess.CalledProcessError:
             if i:
@@ -147,7 +151,7 @@ def start_app_on_device(package_name: str) -> None:
                 raise
             sleep(1)
     logging.debug(f"{pid=}")
-    local_port = int(adb(f"forward tcp:0 jdwp:{pid}").stdout)
+    local_port = int(adb(["forward", "tcp:0", f"jdwp:{pid}"]).stdout)
     logging.debug(f"{local_port=}")
 
     async def inject_frida():
@@ -175,7 +179,7 @@ def start_app_on_device(package_name: str) -> None:
 
 
 def get_packages() -> list[str]:
-    packages = adb("shell pm list packages").stdout.strip().splitlines()
+    packages = adb(["shell", "pm", "list", "packages"]).stdout.strip().splitlines()
     return [p.removeprefix("package:") for p in sorted(packages)]
 
 
@@ -379,7 +383,7 @@ def get_apks(package: str, outdir: Path) -> None:
     if package not in get_packages():
         raise RuntimeError(f"Could not find package: {package}")
 
-    package_info = adb(f"shell pm path {package}").stdout
+    package_info = adb(["shell", "pm", "path", package]).stdout
     if not package_info.startswith("package:"):
         raise RuntimeError(f"Unxepected output from pm path: {package_info!r}")
     apks = [p.removeprefix("package:") for p in package_info.splitlines()]
@@ -393,7 +397,7 @@ def get_apks(package: str, outdir: Path) -> None:
                 f"Overwrite existing file: {outfile.absolute()}?", abort=True
             ):
                 outfile.unlink()
-        adb(f"pull {apk} {outfile.absolute()}")
+        adb(["pull", apk, str(outfile.absolute())])
 
     logging.info("All done! 🎉")
 

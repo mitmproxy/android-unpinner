@@ -14,21 +14,22 @@ else:
     adb_binary = here / "linux" / "adb"
 
 
-def adb(cmd: str) -> subprocess.CompletedProcess[str]:
+def adb(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     """Helper function to call adb and capture stdout."""
-    base = f"{adb_binary}"
+    base = [str(adb_binary)]
     if device:
-        base += f" -s {device}"
+        base += ["-s", device]
         logging.debug(f"Using device: {device}")
-    full_cmd = f"{base} {cmd}"
+    full_cmd = base + cmd
+    full_cmd_str = " ".join(full_cmd)
     try:
         proc = subprocess.run(
-            full_cmd, shell=False, check=True, capture_output=True, text=True
+            full_cmd, check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:
-        logging.debug(f"cmd='{full_cmd}'\n" f"{e.stdout=}\n" f"{e.stderr=}")
+        logging.debug(f"cmd='{full_cmd_str}'\n" f"{e.stdout=}\n" f"{e.stderr=}")
         raise
-    logging.debug(f"cmd='{full_cmd}'\n" f"{proc.stdout=}\n" f"{proc.stderr=}")
+    logging.debug(f"cmd='{full_cmd_str}'\n" f"{proc.stdout=}\n" f"{proc.stderr=}")
     return proc
 
 
