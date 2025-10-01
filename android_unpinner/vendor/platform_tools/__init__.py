@@ -23,7 +23,7 @@ def adb(cmd: str) -> subprocess.CompletedProcess[str]:
     full_cmd = f"{base} {cmd}"
     try:
         proc = subprocess.run(
-            full_cmd, shell=False, check=True, capture_output=True, text=True
+            full_cmd, shell=True, check=True, capture_output=True, text=True
         )
     except subprocess.CalledProcessError as e:
         logging.debug(f"cmd='{full_cmd}'\n" f"{e.stdout=}\n" f"{e.stderr=}")
