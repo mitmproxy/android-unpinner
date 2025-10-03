@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "android-unpinner"
+authors = [
+    {name = "Maximilian Hils", email = "android-unpinner@maximilianhils.com"},
+]
+description = "Android Certificate Pinning Unpinner"
+url = "https://github.com/mitmproxy/android-unpinner"
+version = "1.0"
+classifiers=[
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX",
+    "Operating System :: Microsoft :: Windows",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: Proxy Servers",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "rich-click>=1.9.0",
+]
+
+[project.project_urls]
+Source = "https://github.com/mitmproxy/android-unpinner"
+Documentation = "https://github.com/mitmproxy/android-unpinner"
+Issues = "https://github.com/mitmproxy/android-unpinner/issues"
+
+[project.scripts]
+android-unpinner = "android_unpinner.__main__:cli"
+aup = "android_unpinner.__main__:cli"
