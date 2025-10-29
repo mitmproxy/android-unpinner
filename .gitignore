@@ -2,3 +2,4 @@
 __pycache__/
 *.unpinned.apk
 *.idsig
+uv.lock
