@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import zipfile
 import asyncio
 import logging
 import subprocess
@@ -100,6 +102,71 @@ def install_apk(apk_files: list[Path]) -> None:
         adb(f"install-multiple --no-incremental {' '.join(str(x) for x in apk_files)}")
     else:
         adb(f"install --no-incremental {apk_files[0]}")
+
+
+def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
+    """
+    Extracts APK files from an XAPK file to a folder and returns their paths.
+    """
+
+    if not xapk_path.name.lower().endswith(".xapk"):
+        return None
+
+    if not os.path.exists(xapk_path):
+        return None
+    
+    logging.info(f"Processing XAPK: {os.path.basename(xapk_path)}")
+    
+    if output_dir is None:
+        base_name = os.path.basename(xapk_path)
+        dir_name = "XAPKs" + os.path.sep + os.path.splitext(base_name)[0].replace(" ", "_") + "_extracted"
+        extraction_dir = os.path.join(os.path.dirname(xapk_path), dir_name)
+    else:
+        extraction_dir = os.path.abspath(output_dir)
+
+    if os.path.exists(extraction_dir):
+        logging.warning(f"Directory '{extraction_dir}' already exists. New files will be merged/overwritten.")
+    else:
+        os.makedirs(extraction_dir)
+        logging.info(f"Created extraction directory: {extraction_dir}")
+
+    apk_files = []
+
+    try:        
+        with zipfile.ZipFile(xapk_path, 'r') as zip_ref:
+            zip_ref.extractall(extraction_dir)
+            logging.info("XAPK extraction complete.")
+
+        logging.info("Searching for APK files...")
+        for root, _, files in os.walk(extraction_dir):
+            for file_name in files:
+                if file_name.lower().endswith(".apk"):
+                    full_path = os.path.join(root, file_name)
+                    apk_files.append(Path(full_path))
+                    logging.info(f"Found APK: {full_path}")
+                    
+        return apk_files
+
+    except zipfile.BadZipFile:
+        logging.error(f"Error: '{xapk_path}' is not a valid ZIP file.")
+        return None
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
+        return None
+
+
+def process_xapks(apk_files: list[Path]) -> list[Path]:
+    """
+    Preprocess the list of APK files to handle any XAPK files.
+    """
+    apk_files = list(apk_files)
+    for apk in apk_files:
+        if isinstance(apk, Path) and apk.suffix.lower() == ".xapk":
+            apk_files.remove(apk)
+            found_apks = find_apks_in_xapk(apk)
+            if found_apks:
+                apk_files += found_apks
+    return apk_files
 
 
 def copy_files() -> None:
@@ -276,6 +343,7 @@ def all_cmd(apk_files: list[Path]) -> None:
 
     You may pass multiple files for the same package in case of split APKs.
     """
+    apk_files = process_xapks(apk_files)
     package_names = {build_tools.package_name(apk) for apk in apk_files}
     if len(package_names) > 1:
         raise RuntimeError(
@@ -306,6 +374,7 @@ def install_cmd(apk_files: list[Path]) -> None:
 
     You may pass multiple files for the same package in case of split APKs.
     """
+    apk_files = process_xapks(apk_files)
     install_apk(apk_files)
     logging.info("All done! 🎉")
 
@@ -321,6 +390,7 @@ def install_cmd(apk_files: list[Path]) -> None:
 )
 def patch_apks(apks: list[Path]) -> None:
     """Patch an APK file to be debuggable."""
+    apks = process_xapks(apks)
     patch_apk_files(apks)
     logging.info("All done! 🎉")
 
