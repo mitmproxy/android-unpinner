@@ -8,6 +8,7 @@ This tool removes certificate pinning from APKs.
  - Includes a custom Java Debug Wire Protocol implementation to inject the Frida Gadget via ADB.
  - Uses [HTTPToolkit's excellent unpinning script](https://github.com/httptoolkit/frida-android-unpinning) to defeat certificate pinning.
  - Already includes all native dependencies for Windows/Linux/macOS (`adb`, `apksigner`, `zipalign`, `aapt2`).
+ - Handles XAPKs by extracting the split APKs, unpinning them and installing them with `adb install-multiple`. 
 
 The goal was not to build yet another unpinning tool, but to explore some newer avenues for non-rooted devices.
 Please shamelessly copy whatever idea you like into other tools. :-)
