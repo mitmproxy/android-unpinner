@@ -118,7 +118,7 @@ def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
     logging.info(f"Processing XAPK: {os.path.basename(xapk_path)}")
     
     if output_dir is None:
-        extraction_dir = Path(os.path.join(xapk_path.parent, "XAPKs", f"{xapk_path.stem.replace(' ', '_')}_extracted")).resolve()
+        extraction_dir = xapk_path.parent / f"{xapk_path.stem}_extracted"
     else:
         extraction_dir = Path(output_dir).resolve()
 
