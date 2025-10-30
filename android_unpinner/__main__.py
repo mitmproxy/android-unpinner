@@ -164,6 +164,8 @@ def process_xapks(apk_files: list[Path]) -> list[Path]:
                 ret.extend(apks)
             else:
                 ret.append(apk)
+        else:
+            ret.append(apk)
     return ret
 
 
