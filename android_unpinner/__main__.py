@@ -159,13 +159,11 @@ def process_xapks(apk_files: list[Path]) -> list[Path]:
     """
     ret = []
     for apk in apk_files:
-        if isinstance(apk, Path) and apk.suffix.lower() == ".xapk":
-            if apks := find_apks_in_xapk(apk):
-                ret.extend(apks)
-            else:
-                ret.append(apk)
+        if apks := find_apks_in_xapk(apk):
+            ret.extend(apks)
         else:
             ret.append(apk)
+
     return ret
 
 
