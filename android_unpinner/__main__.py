@@ -118,11 +118,9 @@ def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
     logging.info(f"Processing XAPK: {os.path.basename(xapk_path)}")
     
     if output_dir is None:
-        base_name = os.path.basename(xapk_path)
-        dir_name = "XAPKs" + os.path.sep + os.path.splitext(base_name)[0].replace(" ", "_") + "_extracted"
-        extraction_dir = os.path.join(os.path.dirname(xapk_path), dir_name)
+        extraction_dir = os.path.join(xapk_path.parent, "XAPKs", f"{xapk_path.stem.replace(' ', '_')}_extracted")
     else:
-        extraction_dir = os.path.abspath(output_dir)
+        extraction_dir = Path(output_dir).resolve()
 
     if os.path.exists(extraction_dir):
         logging.warning(f"Directory '{extraction_dir}' already exists. New files will be merged/overwritten.")
@@ -159,14 +157,14 @@ def process_xapks(apk_files: list[Path]) -> list[Path]:
     """
     Preprocess the list of APK files to handle any XAPK files.
     """
-    apk_files = list(apk_files)
+    ret = []
     for apk in apk_files:
         if isinstance(apk, Path) and apk.suffix.lower() == ".xapk":
-            apk_files.remove(apk)
-            found_apks = find_apks_in_xapk(apk)
-            if found_apks:
-                apk_files += found_apks
-    return apk_files
+            if apks := find_apks_in_xapk(apk):
+                ret.extend(apks)
+            else:
+                ret.append(apk)
+    return ret
 
 
 def copy_files() -> None:
