@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
-import zipfile
 import asyncio
 import logging
+import os
 import subprocess
+import zipfile
 from pathlib import Path
 from time import sleep
 
@@ -13,10 +13,13 @@ import rich_click as click
 from rich.logging import RichHandler
 
 from . import jdwplib
-from .vendor import build_tools
-from .vendor import frida_tools
-from .vendor import gadget_config_file_listen, gadget_config_file_script_directory
-from .vendor import gadget_files
+from .vendor import (
+    build_tools,
+    frida_tools,
+    gadget_config_file_listen,
+    gadget_config_file_script_directory,
+    gadget_files,
+)
 from .vendor.platform_tools import adb, set_device
 
 here = Path(__file__).absolute().parent
@@ -25,6 +28,8 @@ LIBGADGET_CONF = "libgadget.config.so"
 
 force = False
 gadget_config_file = gadget_config_file_script_directory
+builtin_script_dir = here / "scripts"
+script_dir = builtin_script_dir
 
 
 def patch_apk_file(infile: Path, outfile: Path) -> None:
@@ -104,7 +109,7 @@ def install_apk(apk_files: list[Path]) -> None:
         adb(f"install --no-incremental {apk_files[0]}")
 
 
-def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
+def find_apks_in_xapk(xapk_path: Path, output_dir=None) -> list[Path] | None:
     """
     Extracts APK files from an XAPK file to a folder and returns their paths.
     """
@@ -114,24 +119,26 @@ def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
 
     if not os.path.exists(xapk_path):
         return None
-    
+
     logging.info(f"Processing XAPK: {os.path.basename(xapk_path)}")
-    
+
     if output_dir is None:
         extraction_dir = xapk_path.parent / f"{xapk_path.stem}_extracted"
     else:
         extraction_dir = Path(output_dir).resolve()
 
     if os.path.exists(extraction_dir):
-        logging.warning(f"Directory '{extraction_dir}' already exists. New files will be merged/overwritten.")
+        logging.warning(
+            f"Directory '{extraction_dir}' already exists. New files will be merged/overwritten."
+        )
     else:
         os.makedirs(extraction_dir)
         logging.info(f"Created extraction directory: {extraction_dir}")
 
     apk_files = []
 
-    try:        
-        with zipfile.ZipFile(xapk_path, 'r') as zip_ref:
+    try:
+        with zipfile.ZipFile(xapk_path, "r") as zip_ref:
             zip_ref.extractall(extraction_dir)
             logging.info("XAPK extraction complete.")
 
@@ -142,7 +149,7 @@ def find_apks_in_xapk(xapk_path: Path, output_dir = None) -> list[Path] | None:
                     full_path = os.path.join(root, file_name)
                     apk_files.append(Path(full_path))
                     logging.info(f"Found APK: {full_path}")
-                    
+
         return apk_files
 
     except zipfile.BadZipFile:
@@ -171,7 +178,6 @@ def copy_files() -> None:
     """
     Copy the Frida Gadget and unpinning scripts.
     """
-    # TODO: We could later provide the option to use a custom script dir.
     ensure_device_connected()
     logging.info("Detect architecture...")
     abi = adb("shell getprop ro.product.cpu.abi").stdout.strip()
@@ -182,8 +188,16 @@ def copy_files() -> None:
     adb(f"push {gadget_file} /data/local/tmp/{LIBGADGET}")
     adb(f"push {gadget_config_file} /data/local/tmp/{LIBGADGET_CONF}")
 
-    logging.info("Copying builtin Frida scripts to /data/local/tmp/android-unpinner...")
-    adb(f"push {here / 'scripts'}/. /data/local/tmp/android-unpinner/")
+    if script_dir == builtin_script_dir:
+        logging.info(
+            "Copying builtin Frida scripts to /data/local/tmp/android-unpinner..."
+        )
+        adb(f"push {script_dir}/. /data/local/tmp/android-unpinner/")
+    else:
+        logging.info(
+            f"Copying Frida scripts within {script_dir} to /data/local/tmp/android-unpinner..."
+        )
+        adb(f"push {script_dir}/*.js /data/local/tmp/android-unpinner/")
     active_scripts = adb("shell ls /data/local/tmp/android-unpinner").stdout.splitlines(
         keepends=False
     )
@@ -324,11 +338,38 @@ device_option = click.option(
 )
 
 
+def _custom_script_dir(ctx, param, val):
+    global script_dir
+    if val:
+        path = Path(val)
+        if not path.is_dir():
+            raise click.BadOptionUsage(
+                custom_script_dir_option,
+                "The provided custom script directory is not a directory.",
+            )
+        if path.is_dir() and not any(path.glob("*.js")):
+            raise click.BadOptionUsage(
+                custom_script_dir_option,
+                "The provided custom script directory doesn't contain any frida scripts",
+            )
+        script_dir = path
+
+
+custom_script_dir_option = click.option(
+    "-s",
+    "--custom-script-dir",
+    help="Custom script directory containing the frida scripts to use instead of the builtin ones.",
+    callback=_custom_script_dir,
+    expose_value=False,
+)
+
+
 @cli.command("all")
 @verbosity_option
 @force_option
 @listen_option
 @device_option
+@custom_script_dir_option
 @click.argument(
     "apk-files",
     type=click.Path(path_type=Path, exists=True),
@@ -397,6 +438,7 @@ def patch_apks(apks: list[Path]) -> None:
 @verbosity_option
 @force_option
 @listen_option
+@custom_script_dir_option
 @device_option
 def push_resources() -> None:
     """Copy Frida gadget and scripts to device."""
